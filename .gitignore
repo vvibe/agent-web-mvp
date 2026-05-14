@@ -1,0 +1,15 @@
+node_modules
+dist
+.env
+.env.local
+*.log
+.DS_Store
+
+# Go binaries
+client-go/agent-client
+client-go/agent-client.exe
+client-go/dist/
+
+# Editor
+.vscode
+.idea
