@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { existsSync, statSync } from 'node:fs';
@@ -28,11 +29,77 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? '127.0.0.1';
 const DEFAULT_CWD = process.env.DEFAULT_CWD ?? process.cwd();
+const PUBLIC_URL = process.env.PUBLIC_URL ?? `http://${HOST}:${PORT}`;
+
+// Origin allowlist for browser-facing endpoints (/ws upgrade + state-changing
+// REST). Defaults to PUBLIC_URL plus the Vite dev server origin; can be
+// overridden with a comma-separated ALLOWED_ORIGINS.
+const ALLOWED_ORIGINS = new Set(
+  (process.env.ALLOWED_ORIGINS ?? `${PUBLIC_URL},http://localhost:5173,http://127.0.0.1:5173`)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
+
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  return ALLOWED_ORIGINS.has(origin);
+}
+
+// Fail-fast if we're on a public bind / https PUBLIC_URL without auth wired up.
+// In that posture, the anonymous fallback would let any visitor share one
+// global account and silently inherit every paired daemon.
+if (!isAuthEnabled()) {
+  const looksPublic = HOST === '0.0.0.0' || PUBLIC_URL.startsWith('https://');
+  if (looksPublic && process.env.ALLOW_ANON !== '1') {
+    console.error(
+      `[boot] Refusing to start: auth is disabled (no GITHUB_CLIENT_ID/SECRET) but ` +
+        `HOST=${HOST} and PUBLIC_URL=${PUBLIC_URL} look public. ` +
+        `Configure GitHub OAuth, or set ALLOW_ANON=1 to override (NOT recommended).`,
+    );
+    process.exit(1);
+  }
+}
 
 const app = express();
-app.use(express.json());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        'frame-ancestors': ["'none'"],
+        // Vite dev server injects inline scripts/HMR ws; relax in dev only.
+        'script-src': process.env.NODE_ENV === 'production'
+          ? ["'self'"]
+          : ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        'connect-src': ["'self'", 'ws:', 'wss:'],
+        'img-src': ["'self'", 'data:', 'https://avatars.githubusercontent.com'],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(loadUser);
+
+// Origin check for state-changing browser requests. GET requests are exempt
+// (OAuth callback, logout-via-GET, etc.) — those don't need CSRF protection
+// because they don't carry side effects beyond redirects. Daemon-facing API
+// (the /client WS) is separately gated on Bearer token, not Origin.
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  const origin = req.headers.origin as string | undefined;
+  // Allow requests with no Origin header only for non-browser clients (daemon
+  // pair-init has no Origin because it's invoked from Go). Those endpoints are
+  // gated separately or rate-limited at the next milestone; for browser-state
+  // routes we still require a matching Origin.
+  if (origin && !isAllowedOrigin(origin)) {
+    res.status(403).json({ error: 'Origin not allowed' });
+    return;
+  }
+  next();
+});
 
 const distWeb = path.resolve(__dirname, '..', 'dist', 'web');
 if (existsSync(distWeb)) {
@@ -73,12 +140,24 @@ const httpServer = createServer(app);
 //   /ws     — browser UI (cookie-gated)
 //   /client — local daemon (Bearer-device-token-gated)
 
-const browserWss = new WebSocketServer({ noServer: true });
-const clientWss = new WebSocketServer({ noServer: true });
+// 1 MB cap is comfortably above any real prompt or daemon message we send;
+// without it ws defaults to 100 MB which lets a single frame OOM the Fly VM.
+const WS_MAX_PAYLOAD = 1 << 20;
+const browserWss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
+const clientWss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD });
 
 httpServer.on('upgrade', (req, socket, head) => {
   const url = req.url ?? '';
   if (url === '/ws' || url.startsWith('/ws?')) {
+    // CSWSH defence: browsers always send Origin on a WebSocket handshake.
+    // The /client endpoint below is reached by the Go daemon (no Origin header)
+    // so this check is intentionally scoped to /ws only.
+    const origin = req.headers.origin as string | undefined;
+    if (!isAllowedOrigin(origin)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     const userId = userIdFromCookie(req.headers.cookie);
     if (!userId) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
@@ -342,6 +421,7 @@ httpServer.listen(PORT, HOST, () => {
   console.log(`  browser ws: ws://${HOST}:${PORT}/ws`);
   console.log(`  client ws:  ws://${HOST}:${PORT}/client (Bearer device-token)`);
   console.log(`  auth: ${isAuthEnabled() ? 'GitHub OAuth' : 'DISABLED (dev mode, single anon user)'}`);
+  console.log(`  allowed origins: ${[...ALLOWED_ORIGINS].join(', ')}`);
   console.log(`  default cwd: ${DEFAULT_CWD}`);
   if (!existsSync(distWeb)) {
     console.log('  (no built frontend found — run `npm run dev:web` for Vite dev server)');

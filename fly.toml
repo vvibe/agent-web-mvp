@@ -18,7 +18,11 @@ primary_region = 'nrt' # Tokyo — closest Fly region to Taiwan
 
 [env]
   PUBLIC_URL = 'https://agent-web-mvp-renddi.fly.dev'
+  # Locks the WebSocket Origin allowlist to the production host so the dev
+  # localhost origins (used as fallback in server/index.ts) never apply here.
+  ALLOWED_ORIGINS = 'https://agent-web-mvp-renddi.fly.dev'
   DB_PATH = '/data/app.db'
+  NODE_ENV = 'production'
 
 [[mounts]]
   source = 'agent_web_data'

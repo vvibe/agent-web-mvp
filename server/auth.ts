@@ -25,6 +25,23 @@ export function isAuthEnabled(): boolean {
   return !!(GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET);
 }
 
+/**
+ * Constrain OAuth `return_to` to a same-origin relative path. Rejects:
+ *  - non-strings
+ *  - anything that doesn't start with a single '/'
+ *  - protocol-relative '//evil.example' (which res.redirect would treat as
+ *    an absolute URL with the current scheme)
+ *  - URIs whose first segment looks like a scheme ('/javascript:...').
+ * Falls back to '/' when invalid.
+ */
+export function safeReturnTo(input: unknown): string {
+  if (typeof input !== 'string') return '/';
+  if (!input.startsWith('/')) return '/';
+  if (input.startsWith('//')) return '/';
+  if (input.startsWith('/\\')) return '/';
+  return input;
+}
+
 export interface AuthedRequest extends Request {
   user?: UserRow;
 }
@@ -86,7 +103,7 @@ export function startOAuthLogin(req: Request, res: Response) {
   }
   cleanupPendingOAuth();
   const state = randomBytes(16).toString('hex');
-  const returnTo = typeof req.query.return_to === 'string' ? req.query.return_to : '/';
+  const returnTo = safeReturnTo(req.query.return_to);
   pendingOAuth.set(state, { returnTo, expiresAt: Date.now() + 10 * 60 * 1000 });
 
   const url = new URL('https://github.com/login/oauth/authorize');
@@ -175,7 +192,9 @@ export async function handleOAuthCallback(req: Request, res: Response) {
       maxAge: COOKIE_MAX_AGE_MS,
       path: '/',
     });
-    res.redirect(pending.returnTo);
+    // Defence in depth: re-check on the way out in case anything bypassed
+    // safeReturnTo when storing.
+    res.redirect(safeReturnTo(pending.returnTo));
   } catch (err) {
     console.error('[auth] callback error', err);
     res.status(500).send('Authentication failed');

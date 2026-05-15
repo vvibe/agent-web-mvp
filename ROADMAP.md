@@ -56,6 +56,34 @@ Claude continues multi-turn context after the server reboots.
 `SessionStore.rehydrate()` runs at boot, reconstructs in-memory Session
 objects with full history at status='idle'.
 
+### M4.5 — Security hotfix pass
+
+Triggered by the audit done before opening up install-script-driven
+onboarding. Five immediate fixes:
+
+- **C-1** `Origin` allowlist on the `/ws` upgrade (browser only — `/client`
+  has no Origin header from Go). Allowlist derived from `PUBLIC_URL` plus
+  the Vite dev origin, overridable via `ALLOWED_ORIGINS`. Closes
+  cross-site WebSocket hijacking (CSWSH) → otherwise any site a logged-in
+  user visits could open an authenticated WS and drive `claude`/`codex`
+  on their machine.
+- **C-3** OAuth `return_to` constrained to same-origin relative paths via
+  `safeReturnTo()`: must start with single `/`, rejects `//evil` and
+  `/\evil`. Closes open redirect from `/auth/github?return_to=…`.
+- **H-2** Boot guard: if `HOST=0.0.0.0` or `PUBLIC_URL` is https and
+  GitHub OAuth env is unset, exit 1. Override with `ALLOW_ANON=1` for
+  the rare deliberate case. Closes the "Fly deploy without secrets =
+  every visitor shares one anon account that owns every paired daemon"
+  failure mode.
+- **H-6** `helmet` middleware with `frame-ancestors 'none'`, restricted
+  CSP, and the usual defensive headers. Closes clickjacking of the
+  permission-approval modal.
+- **WS payload cap** — both servers run with `maxPayload: 1 MB` instead of
+  the default 100 MB so a single hostile frame can't OOM the 256 MB Fly
+  VM.
+
+Body size on Express JSON is also capped at `1mb`.
+
 ---
 
 ## Open
