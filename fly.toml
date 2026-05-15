@@ -16,6 +16,14 @@ primary_region = 'nrt' # Tokyo — closest Fly region to Taiwan
   min_machines_running = 1
   processes = ['app']
 
+[env]
+  PUBLIC_URL = 'https://agent-web-mvp-renddi.fly.dev'
+  DB_PATH = '/data/app.db'
+
+[[mounts]]
+  source = 'agent_web_data'
+  destination = '/data'
+
 [[vm]]
   memory = '256mb'
   cpu_kind = 'shared'

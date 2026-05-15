@@ -14,6 +14,7 @@ export interface DeviceHello {
 
 export interface Device extends DeviceHello {
   id: string;
+  userId: string;
   connectedAt: number;
   remoteAddr: string;
   ws: WebSocket;
@@ -34,21 +35,31 @@ export class DeviceRegistry {
     return [...this.devices.values()];
   }
 
+  /**
+   * List a single user's connected daemons. Use this anywhere a browser is
+   * asking "what devices are mine?" — `list()` returns every daemon across
+   * users and is only correct for global housekeeping.
+   */
+  listForUser(userId: string): Device[] {
+    return this.list().filter((d) => d.userId === userId);
+  }
+
   get(id: string): Device | undefined {
     return this.devices.get(id);
   }
 
   /**
-   * Pick a daemon to run an agent on. Single-daemon MVP: return the first
-   * connected daemon, or undefined if none. Device picker (M3) replaces this.
+   * Pick a daemon to run an agent on for a given user. Single-daemon MVP per
+   * user: return the user's first connected daemon, or undefined if none.
    */
-  pickRunner(): Device | undefined {
-    return this.list()[0];
+  pickRunner(userId: string): Device | undefined {
+    return this.listForUser(userId)[0];
   }
 
-  register(ws: WebSocket, hello: DeviceHello, remoteAddr: string): Device {
+  register(ws: WebSocket, userId: string, hello: DeviceHello, remoteAddr: string): Device {
     const device: Device = {
       id: randomUUID(),
+      userId,
       connectedAt: Date.now(),
       remoteAddr,
       ws,

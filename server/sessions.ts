@@ -13,24 +13,26 @@ import { RemoteRunner } from './agents/remote.ts';
 import type { DeviceRegistry } from './devices.ts';
 
 export type RunnerFactory = (
+  userId: string,
   agent: AgentKind,
   cwd: string,
   events: AgentEvents,
 ) => AgentRunner;
 
 /**
- * Build a runner factory that prefers a connected daemon, falling back to a
- * local in-server runner when no daemon is available. Single-machine "npm
- * start + browser" mode keeps working as long as no daemon is connected.
+ * Build a runner factory that prefers a connected daemon for the given user,
+ * falling back to a local in-server runner when none is available. Daemons
+ * belonging to other users are ignored.
  */
 export function makeRunnerFactory(devices: DeviceRegistry): RunnerFactory {
-  return (agent, cwd, events) => {
-    // Prefer remote even if no daemon is currently connected — the user may
-    // be about to start one. RemoteRunner re-resolves the device on each
-    // send(), so an empty registry just yields a graceful "no daemon" error
-    // for the first prompt and recovers as soon as a daemon shows up.
-    if (devices.list().length > 0) {
-      return new RemoteRunner(agent, cwd, devices, events);
+  return (userId, agent, cwd, events) => {
+    // Prefer remote even if no daemon is currently connected for this user —
+    // they may be about to start one. RemoteRunner re-resolves the device on
+    // each send(), so an empty per-user registry just yields a graceful "no
+    // daemon" error for the first prompt and recovers as soon as a daemon
+    // shows up.
+    if (devices.listForUser(userId).length > 0) {
+      return new RemoteRunner(userId, agent, cwd, devices, events);
     }
     return agent === 'claude' ? new ClaudeRunner(cwd, events) : new CodexRunner(cwd, events);
   };
@@ -50,6 +52,7 @@ export interface SessionEvents {
 
 export class Session {
   readonly id: string;
+  readonly userId: string;
   readonly agent: AgentKind;
   cwd: string;
   title: string;
@@ -66,11 +69,12 @@ export class Session {
   private cancelling = false;
 
   constructor(
-    opts: { agent: AgentKind; cwd: string; title?: string },
+    opts: { userId: string; agent: AgentKind; cwd: string; title?: string },
     private events: SessionEvents,
     makeRunner: RunnerFactory,
   ) {
     this.id = randomUUID();
+    this.userId = opts.userId;
     this.agent = opts.agent;
     this.cwd = opts.cwd;
     this.title = opts.title?.trim() || defaultTitle(opts.agent, opts.cwd);
@@ -97,7 +101,7 @@ export class Session {
       },
     };
 
-    this.runner = makeRunner(opts.agent, this.cwd, agentEvents);
+    this.runner = makeRunner(opts.userId, opts.agent, this.cwd, agentEvents);
   }
 
   meta(): SessionMeta {
@@ -196,11 +200,27 @@ export class SessionStore {
     return [...this.sessions.values()].sort((a, b) => a.createdAt - b.createdAt);
   }
 
+  /** Sessions belonging to a specific user. */
+  listForUser(userId: string): Session[] {
+    return this.list().filter((s) => s.userId === userId);
+  }
+
   get(id: string): Session | undefined {
     return this.sessions.get(id);
   }
 
-  create(opts: { agent: AgentKind; cwd: string; title?: string }): Session {
+  /**
+   * Resolve a session that belongs to `userId`. Returns undefined if the
+   * session doesn't exist OR belongs to someone else. The two cases are
+   * deliberately conflated so a caller can't probe for session ids that
+   * aren't theirs.
+   */
+  getForUser(id: string, userId: string): Session | undefined {
+    const s = this.sessions.get(id);
+    return s && s.userId === userId ? s : undefined;
+  }
+
+  create(opts: { userId: string; agent: AgentKind; cwd: string; title?: string }): Session {
     const s = new Session(opts, this.events, this.makeRunner);
     this.sessions.set(s.id, s);
     this.events.onMeta(s);

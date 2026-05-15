@@ -8,6 +8,7 @@ dist
 # Go binaries
 client-go/agent-client
 client-go/agent-client.exe
+client-go/agent-client.exe~
 client-go/dist/
 
 # Editor
@@ -18,3 +19,6 @@ client-go/dist/
 
 # Smoke-test scratch
 tmp/
+
+# Local SQLite db
+data/

@@ -363,3 +363,87 @@ code {
   font-family: ui-monospace, monospace;
   font-size: 0.9em;
 }
+
+/* ─── Login gate ───────────────────────────────────────────────────── */
+.boot { display: grid; place-items: center; height: 100%; color: var(--text-dim); }
+.login-gate {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  background: linear-gradient(180deg, var(--bg) 0%, #0a0d14 100%);
+}
+.login-gate-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px 36px;
+  width: min(420px, 90vw);
+  text-align: center;
+}
+.login-gate-card h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: 1px; }
+.login-gate-card .muted { color: var(--text-dim); margin: 0 0 24px; font-size: 14px; }
+.github-btn {
+  display: inline-block;
+  background: #24292f;
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 600;
+}
+.github-btn:hover { background: #2f363d; }
+
+/* ─── Pair page ───────────────────────────────────────────────────── */
+.pair-page {
+  display: grid;
+  place-items: center;
+  height: 100%;
+}
+.pair-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px 28px;
+  width: min(520px, 90vw);
+}
+.pair-card h1 { margin: 0 0 12px; font-size: 22px; }
+.pair-card p { line-height: 1.5; }
+.pair-card .muted { color: var(--text-dim); font-size: 13px; }
+.pair-card .error { color: var(--red); }
+.pair-card .success { color: var(--green); }
+.pair-actions { display: flex; gap: 10px; margin-top: 20px; }
+.pair-actions button.approve {
+  background: var(--green);
+  color: #0a0d14;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pair-actions button.approve:disabled { opacity: 0.6; cursor: default; }
+.pair-actions .cancel {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 18px;
+  text-decoration: none;
+}
+
+/* ─── Sidebar footer ──────────────────────────────────────────────── */
+.sidebar-footer {
+  margin-top: auto;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.sidebar-footer .user-login { color: var(--text-dim); }
+.sidebar-footer .logout {
+  color: var(--text-dim);
+  text-decoration: none;
+}
+.sidebar-footer .logout:hover { color: var(--text); }

@@ -23,6 +23,12 @@ ENV NODE_ENV=production
 ENV PORT=8787
 ENV HOST=0.0.0.0
 
+# better-sqlite3 ships prebuilds for musl-x64 + node-abi 127 (Node 22) so we
+# usually don't need a toolchain. Keep python3/make/g++ around for the rare
+# arch where prebuild-install falls back to source — npm prune --production
+# afterwards would drop them but they're already cheap in this stage.
+RUN apk add --no-cache python3 make g++
+
 # Production deps only. tsx is listed under dependencies (not devDependencies)
 # because the runtime image executes the server with it.
 COPY package.json package-lock.json ./

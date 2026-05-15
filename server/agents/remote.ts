@@ -19,6 +19,7 @@ export class RemoteRunner implements AgentRunner {
   private unsubscribe: (() => void) | undefined;
 
   constructor(
+    private readonly userId: string,
     private readonly agent: AgentKind,
     private readonly cwd: string,
     private readonly registry: DeviceRegistry,
@@ -26,7 +27,7 @@ export class RemoteRunner implements AgentRunner {
   ) {}
 
   async send(prompt: string): Promise<void> {
-    const device = this.registry.pickRunner();
+    const device = this.registry.pickRunner(this.userId);
     if (!device) {
       this.events.onError(new Error('No daemon connected. Start agent-client on your machine.'));
       this.events.onDone();

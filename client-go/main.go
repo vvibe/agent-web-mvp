@@ -84,17 +84,14 @@ Examples:
 
 func runLogin(args []string) {
 	fs := flag.NewFlagSet("login", flag.ExitOnError)
-	token := fs.String("token", "", "auth token for the server")
-	server := fs.String("server", "", "WebSocket URL of the Agent Web server, e.g. ws://127.0.0.1:8787/client")
+	token := fs.String("token", "", "(advanced) pre-existing device token; skips the interactive flow")
+	server := fs.String("server", "", "WebSocket URL of the Agent Web server, e.g. wss://your-app.fly.dev/client")
 	name := fs.String("name", "", "human-friendly display name for this machine (e.g. \"My MacBook\")")
 	_ = fs.Parse(args)
 
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
-	}
-	if *token != "" {
-		cfg.Token = *token
 	}
 	if *server != "" {
 		cfg.Server = *server
@@ -105,11 +102,28 @@ func runLogin(args []string) {
 	if cfg.Server == "" {
 		cfg.Server = defaultServer
 	}
+
+	// Manual token override: useful for scripting / migration. Skips the
+	// interactive device-code flow.
+	if *token != "" {
+		cfg.Token = *token
+		if err := saveConfig(cfg); err != nil {
+			log.Fatalf("save config: %v", err)
+		}
+		p, _ := configPath()
+		fmt.Printf("saved → %s\n  server: %s\n  token:  %s\n  name:   %s\n", p, cfg.Server, maskToken(cfg.Token), cfg.DisplayName)
+		return
+	}
+
+	// Interactive device-code flow.
+	if err := pairInteractive(cfg); err != nil {
+		log.Fatalf("pair: %v", err)
+	}
 	if err := saveConfig(cfg); err != nil {
 		log.Fatalf("save config: %v", err)
 	}
 	p, _ := configPath()
-	fmt.Printf("saved → %s\n  server: %s\n  token:  %s\n  name:   %s\n", p, cfg.Server, maskToken(cfg.Token), cfg.DisplayName)
+	fmt.Printf("\nsaved → %s\n  server: %s\n  token:  %s\n  name:   %s\n", p, cfg.Server, maskToken(cfg.Token), cfg.DisplayName)
 }
 
 func runShowConfig() {

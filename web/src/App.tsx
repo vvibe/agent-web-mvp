@@ -10,8 +10,56 @@ import { SessionList } from './components/SessionList';
 import { ChatPane } from './components/ChatPane';
 import { PermissionModal } from './components/PermissionModal';
 import { NewSessionDialog } from './components/NewSessionDialog';
+import { LoginGate } from './components/LoginGate';
+import { PairPage } from './components/PairPage';
+
+interface Me {
+  authenticated: boolean;
+  authEnabled: boolean;
+  user?: {
+    id: string;
+    login: string;
+    name: string | null;
+    email: string | null;
+    avatar_url: string | null;
+  };
+}
 
 export function App() {
+  const [me, setMe] = useState<Me | null>(null);
+
+  useEffect(() => {
+    fetch('/api/me')
+      .then((r) => r.json())
+      .then(setMe)
+      .catch(() => setMe({ authenticated: false, authEnabled: true }));
+  }, []);
+
+  if (!me) {
+    return <div className="boot">Loading…</div>;
+  }
+
+  // Tiny path-based router. Keeps the SPA stateful without pulling react-router.
+  const path = window.location.pathname;
+  const search = new URLSearchParams(window.location.search);
+
+  // /pair?code=ABC — show pair page if logged in, else redirect through OAuth.
+  if (path === '/pair') {
+    const code = search.get('code') ?? '';
+    if (!me.authenticated) {
+      return <LoginGate authEnabled={me.authEnabled} returnTo={`/pair?code=${encodeURIComponent(code)}`} />;
+    }
+    return <PairPage code={code} user={me.user ?? null} />;
+  }
+
+  if (!me.authenticated) {
+    return <LoginGate authEnabled={me.authEnabled} returnTo="/" />;
+  }
+
+  return <MainApp me={me} />;
+}
+
+function MainApp({ me }: { me: Me }) {
   const wsRef = useRef<WSClient | null>(null);
   const [defaultCwd, setDefaultCwd] = useState<string>('');
   const [sessions, setSessions] = useState<Record<string, SessionMeta>>({});
@@ -104,6 +152,14 @@ export function App() {
           onSelect={setActiveId}
           onDelete={(id) => wsRef.current?.send({ type: 'delete_session', sessionId: id })}
         />
+        <div className="sidebar-footer">
+          {me.user && (
+            <>
+              <span className="muted user-login">{me.user.login}</span>
+              <a className="logout" href="/auth/logout">Sign out</a>
+            </>
+          )}
+        </div>
       </aside>
 
       <main className="main">
