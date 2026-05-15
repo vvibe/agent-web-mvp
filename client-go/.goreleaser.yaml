@@ -45,7 +45,9 @@ archives:
         formats: [zip]
     files:
       - README.md
-      - LICENSE*
+      - LICENSE  # duplicated from repo root; goreleaser security policy
+                 # forbids `../` paths in archive files. The canonical
+                 # license is at repo root; keep these in sync.
 
 checksum:
   name_template: "checksums.txt"
