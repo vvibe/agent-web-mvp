@@ -66,6 +66,9 @@ export class CodexRunner implements AgentRunner {
           cwd: this.cwd,
           shell: process.platform === 'win32', // resolve .cmd shims on Windows
           env: process.env,
+          // Close stdin: when given a prompt arg, codex still tries to read
+          // additional input from stdin and hangs on EOF if the pipe is open.
+          stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch (err) {
         this.events.onError(err as Error);
