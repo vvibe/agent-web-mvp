@@ -61,11 +61,17 @@ func newService() (service.Service, error) {
 		Name:        serviceName,
 		DisplayName: serviceDisplayName,
 		Description: serviceDescription,
+		// Windows SCM launches the registered binary with the args we configure
+		// here. Without this, `agent-client.exe` is invoked with no args, hits
+		// the "print usage and exit 2" branch in main, and SCM kills the service
+		// after the 30s start-timeout. The "run" subcommand calls svc.Run() so
+		// kardianos can talk to SCM properly.
+		Arguments: []string{"run"},
 		Option: service.KeyValue{
 			"UserService": true,
 			// macOS: KeepAlive + RunAtLoad ensure launchd restarts us after crashes.
-			"KeepAlive":   true,
-			"RunAtLoad":   true,
+			"KeepAlive": true,
+			"RunAtLoad": true,
 		},
 	}
 	return service.New(&program{}, cfg)
