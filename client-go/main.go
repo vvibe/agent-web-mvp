@@ -50,6 +50,8 @@ func main() {
 		runForeground()
 	case "login":
 		runLogin(args)
+	case "upgrade":
+		runUpgrade(args)
 	case "show-config":
 		runShowConfig()
 	case "version":
@@ -79,6 +81,8 @@ Commands:
                      useful for testing without installing)
   login --token=X --server=URL [--name=NAME]
                      Save auth token, server URL, and display name to the config file
+  upgrade [--check]  Download and install the latest release from GitHub
+                     (stops + restarts the service around the swap)
   show-config        Print the config file path and current contents
   version            Print version
   help               Show this help
@@ -87,6 +91,7 @@ Examples:
   vvibe login --token=abc123 --server=ws://127.0.0.1:8787/client
   sudo vvibe install        # macOS / Linux user-service usually does not need sudo
   vvibe status
+  vvibe upgrade --check     # show if an update is available without applying
 `)
 }
 

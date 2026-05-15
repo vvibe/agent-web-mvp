@@ -132,13 +132,16 @@ SmartScreen / macOS Gatekeeper may warn on first run (M6 P1).
 
 ### Updating
 
-Until `vvibe upgrade` lands (M4.9), updates are a manual re-install:
-
 ```sh
-vvibe stop
-curl -fsSL https://agent-web-mvp-renddi.fly.dev/install.sh | sh   # or iwr ... | iex on Windows
-vvibe start
+vvibe upgrade --check   # report whether a new version is available
+vvibe upgrade           # download, verify sha256, restart the service
+vvibe upgrade --yes     # skip the y/N prompt (for scripts)
 ```
+
+`upgrade` stops the OS service (if registered + running), atomically
+replaces the binary, and starts the service back up. If the daemon
+isn't running as a service (`vvibe run` foreground), it just swaps the
+file.
 
 If you want to build from source instead, see
 [`client-go/README.md`](./client-go/README.md).

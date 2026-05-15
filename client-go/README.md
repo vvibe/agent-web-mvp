@@ -125,6 +125,7 @@ Uninstall:
 | `status` | Print service state |
 | `run` | Run in foreground (used by the service manager; also handy for debugging) |
 | `login [--token=X --server=URL]` | Device-code pairing, or persist a pre-existing token directly |
+| `upgrade [--check] [--yes]` | Self-update from GitHub Releases (sha256-verified, restarts service) |
 | `show-config` | Print config path + current values |
 | `version` | Print version (built with `-X main.version=…` ldflags) |
 
@@ -154,4 +155,5 @@ is solid and we can build the rest of the SaaS on top of it.
 - No code signing → Windows SmartScreen / macOS Gatekeeper warnings on
   first run. Address before any public release (M6 P1).
 - Token stored in plain text. Move to OS keychain before shipping (M4.7).
-- No auto-update yet. `vvibe upgrade` planned for M4.9.
+- `vvibe upgrade` is opt-in (manual). Background auto-update — with code
+  signing and changelog UI — is M-future, not on the near roadmap.

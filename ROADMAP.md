@@ -149,7 +149,25 @@ OSS rejects non-semver tags (its prefix-stripping `monorepo.tag_prefix`
 is Pro-only). If the server ever needs versioned tags later, give them
 a different prefix like `server-v*`.
 
-**Renamed** the CLI from `agent-client` to **`vvibe`** in the same pass:
+### M4.9 — `vvibe upgrade` self-update
+
+[`creativeprojects/go-selfupdate`](https://github.com/creativeprojects/go-selfupdate)
+fetches the latest release from GitHub, downloads the per-OS/arch
+archive, sha256-verifies against `checksums.txt`, and atomically
+replaces the running binary. `upgrade` stops the kardianos service
+(if installed + running), swaps the file, then starts it again.
+
+`upgrade --check` reports without applying. `upgrade --yes` skips the
+y/N prompt for scripted use; non-TTY stdin without `--yes` refuses
+rather than guessing.
+
+Background / automatic update is intentionally not in scope — needs
+code signing first so each update doesn't re-trigger SmartScreen /
+Gatekeeper.
+
+### M4.8 follow-up — CLI renamed to `vvibe`
+
+Renamed the CLI from `agent-client` to **`vvibe`** in the same pass:
 binary name, service ID (`Vvibe`), config dir (`~/.config/vvibe/`),
 asset filenames (`vvibe_<os>_<arch>.<ext>`), and every user-facing string
 in help/UI. Existing daemons must `uninstall` the old `AgentWebClient`
