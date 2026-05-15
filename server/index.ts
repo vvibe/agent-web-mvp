@@ -6,8 +6,9 @@ import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ClientMessage, ServerMessage } from '../shared/types.ts';
-import { SessionStore, type Session } from './sessions.ts';
+import { SessionStore, makeRunnerFactory, type Session } from './sessions.ts';
 import { DeviceRegistry, type DeviceHello } from './devices.ts';
+import type { DaemonClientMessage } from '../shared/types.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -88,7 +89,7 @@ clientWss.on('connection', (ws, req) => {
       const device = devices.register(ws, hello, remoteAddr);
       deviceId = device.id;
       console.log(
-        `[client] device registered: ${hello.hostname} (${hello.os}/${hello.arch}) — agents=${
+        `[client] device registered: ${hello.displayName ?? hello.hostname} (${hello.os}/${hello.arch}) — agents=${
           hello.agents?.map((a) => a.name).join(',') || 'none'
         }`,
       );
@@ -96,6 +97,15 @@ clientWss.on('connection', (ws, req) => {
     }
     if (msg.type === 'echo_reply') {
       console.log('[client] echo_reply:', msg.data, '→', msg.ts);
+      return;
+    }
+    if (
+      deviceId &&
+      (msg.type === 'daemon_message' ||
+        msg.type === 'daemon_permission_request' ||
+        msg.type === 'daemon_done')
+    ) {
+      devices.dispatchDaemonMessage(deviceId, msg as DaemonClientMessage);
     }
   });
 
@@ -127,14 +137,17 @@ function broadcast(msg: ServerMessage) {
   }
 }
 
-const store = new SessionStore({
-  onMeta: (s) => broadcast({ type: 'session_updated', session: s.meta() }),
-  onMessage: (m) => broadcast({ type: 'message', message: m }),
-  onPermissionRequest: (r) => broadcast({ type: 'permission_request', request: r }),
-  onPermissionResolved: (sid, rid) =>
-    broadcast({ type: 'permission_resolved', sessionId: sid, requestId: rid }),
-  onError: (sid, err) => broadcast({ type: 'error', sessionId: sid, error: err }),
-});
+const store = new SessionStore(
+  {
+    onMeta: (s) => broadcast({ type: 'session_updated', session: s.meta() }),
+    onMessage: (m) => broadcast({ type: 'message', message: m }),
+    onPermissionRequest: (r) => broadcast({ type: 'permission_request', request: r }),
+    onPermissionResolved: (sid, rid) =>
+      broadcast({ type: 'permission_resolved', sessionId: sid, requestId: rid }),
+    onError: (sid, err) => broadcast({ type: 'error', sessionId: sid, error: err }),
+  },
+  makeRunnerFactory(devices),
+);
 
 function send(ws: WebSocket, msg: ServerMessage) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -179,7 +192,11 @@ async function handleClientMessage(ws: WebSocket, msg: ClientMessage) {
       send(ws, { type: 'sessions', sessions: store.list().map((s) => s.meta()) });
       return;
     case 'create_session': {
-      if (!isValidCwd(msg.cwd)) {
+      // Only validate cwd against the server filesystem when there's no
+      // daemon connected — remote daemon paths live on the user's machine,
+      // not the server.
+      const hasDaemon = devices.list().length > 0;
+      if (!hasDaemon && !isValidCwd(msg.cwd)) {
         send(ws, { type: 'error', error: `Directory does not exist: ${msg.cwd}` });
         return;
       }

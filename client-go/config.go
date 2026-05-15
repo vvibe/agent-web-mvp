@@ -16,8 +16,9 @@ const defaultServer = "ws://127.0.0.1:8787/client"
 // this is intentional for the MVP; replace with OS keychain (keyring, Windows
 // Credential Manager, macOS Keychain) before shipping to real users.
 type Config struct {
-	Server string `json:"server"`
-	Token  string `json:"token"`
+	Server      string `json:"server"`
+	Token       string `json:"token"`
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 func appDir() (string, error) {

@@ -6,9 +6,35 @@ import type {
   SessionMeta,
   SessionStatus,
 } from '../shared/types.ts';
-import type { AgentRunner } from './agents/base.ts';
+import type { AgentEvents, AgentRunner } from './agents/base.ts';
 import { ClaudeRunner } from './agents/claude.ts';
 import { CodexRunner } from './agents/codex.ts';
+import { RemoteRunner } from './agents/remote.ts';
+import type { DeviceRegistry } from './devices.ts';
+
+export type RunnerFactory = (
+  agent: AgentKind,
+  cwd: string,
+  events: AgentEvents,
+) => AgentRunner;
+
+/**
+ * Build a runner factory that prefers a connected daemon, falling back to a
+ * local in-server runner when no daemon is available. Single-machine "npm
+ * start + browser" mode keeps working as long as no daemon is connected.
+ */
+export function makeRunnerFactory(devices: DeviceRegistry): RunnerFactory {
+  return (agent, cwd, events) => {
+    // Prefer remote even if no daemon is currently connected — the user may
+    // be about to start one. RemoteRunner re-resolves the device on each
+    // send(), so an empty registry just yields a graceful "no daemon" error
+    // for the first prompt and recovers as soon as a daemon shows up.
+    if (devices.list().length > 0) {
+      return new RemoteRunner(agent, cwd, devices, events);
+    }
+    return agent === 'claude' ? new ClaudeRunner(cwd, events) : new CodexRunner(cwd, events);
+  };
+}
 
 interface PendingPermission {
   resolve: (allow: boolean) => void;
@@ -39,7 +65,11 @@ export class Session {
   // user-initiated abort (= idle) from a real runtime failure (= error).
   private cancelling = false;
 
-  constructor(opts: { agent: AgentKind; cwd: string; title?: string }, private events: SessionEvents) {
+  constructor(
+    opts: { agent: AgentKind; cwd: string; title?: string },
+    private events: SessionEvents,
+    makeRunner: RunnerFactory,
+  ) {
     this.id = randomUUID();
     this.agent = opts.agent;
     this.cwd = opts.cwd;
@@ -67,10 +97,7 @@ export class Session {
       },
     };
 
-    this.runner =
-      opts.agent === 'claude'
-        ? new ClaudeRunner(this.cwd, agentEvents)
-        : new CodexRunner(this.cwd, agentEvents);
+    this.runner = makeRunner(opts.agent, this.cwd, agentEvents);
   }
 
   meta(): SessionMeta {
@@ -163,7 +190,7 @@ function defaultTitle(agent: AgentKind, cwd: string): string {
 export class SessionStore {
   private sessions = new Map<string, Session>();
 
-  constructor(private events: SessionEvents) {}
+  constructor(private events: SessionEvents, private makeRunner: RunnerFactory) {}
 
   list(): Session[] {
     return [...this.sessions.values()].sort((a, b) => a.createdAt - b.createdAt);
@@ -174,7 +201,7 @@ export class SessionStore {
   }
 
   create(opts: { agent: AgentKind; cwd: string; title?: string }): Session {
-    const s = new Session(opts, this.events);
+    const s = new Session(opts, this.events, this.makeRunner);
     this.sessions.set(s.id, s);
     this.events.onMeta(s);
     return s;

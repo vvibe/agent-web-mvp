@@ -69,8 +69,8 @@ Commands:
   status             Show service status
   run                Run in the foreground (used by the service manager; also
                      useful for testing without installing)
-  login --token=X --server=URL
-                     Save auth token and server URL to the config file
+  login --token=X --server=URL [--name=NAME]
+                     Save auth token, server URL, and display name to the config file
   show-config        Print the config file path and current contents
   version            Print version
   help               Show this help
@@ -86,6 +86,7 @@ func runLogin(args []string) {
 	fs := flag.NewFlagSet("login", flag.ExitOnError)
 	token := fs.String("token", "", "auth token for the server")
 	server := fs.String("server", "", "WebSocket URL of the Agent Web server, e.g. ws://127.0.0.1:8787/client")
+	name := fs.String("name", "", "human-friendly display name for this machine (e.g. \"My MacBook\")")
 	_ = fs.Parse(args)
 
 	cfg, err := loadConfig()
@@ -98,6 +99,9 @@ func runLogin(args []string) {
 	if *server != "" {
 		cfg.Server = *server
 	}
+	if *name != "" {
+		cfg.DisplayName = *name
+	}
 	if cfg.Server == "" {
 		cfg.Server = defaultServer
 	}
@@ -105,7 +109,7 @@ func runLogin(args []string) {
 		log.Fatalf("save config: %v", err)
 	}
 	p, _ := configPath()
-	fmt.Printf("saved → %s\n  server: %s\n  token:  %s\n", p, cfg.Server, maskToken(cfg.Token))
+	fmt.Printf("saved → %s\n  server: %s\n  token:  %s\n  name:   %s\n", p, cfg.Server, maskToken(cfg.Token), cfg.DisplayName)
 }
 
 func runShowConfig() {
