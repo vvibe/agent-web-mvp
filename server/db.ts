@@ -37,8 +37,13 @@ db.exec(`
     last_seen_at    INTEGER NOT NULL
   );
 
+  -- device_tokens stores only the hash of the secret half of the token.
+  -- The actual token presented by the daemon is "<id>.<secret>"; the server
+  -- looks up the row by id, then constant-time-compares sha256(secret) to
+  -- secret_hash. A DB leak therefore can't be replayed against /client.
   CREATE TABLE IF NOT EXISTS device_tokens (
-    token           TEXT PRIMARY KEY,
+    id              TEXT PRIMARY KEY,
+    secret_hash     TEXT NOT NULL,
     user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     display_name    TEXT,
     created_at      INTEGER NOT NULL,
@@ -57,6 +62,10 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_browser_sessions_user ON browser_sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id);
+
+  -- pairing_codes adds an explicit 'claimed' status so pair-status can only
+  -- hand out the token exactly once. Older deployments may still have the
+  -- column-free shape; the migration block below handles it.
 
   CREATE TABLE IF NOT EXISTS agent_sessions (
     id              TEXT PRIMARY KEY,
@@ -88,6 +97,32 @@ db.prepare(`
   VALUES ('anon', 0, 'anonymous', NULL, 'Anonymous (dev)', NULL, ?)
   ON CONFLICT(id) DO NOTHING
 `).run(Date.now());
+
+// One-shot migration from the M3 device_tokens shape (PK was raw token) to
+// the hashed-secret shape introduced in M4.6. We detect the legacy column
+// and drop existing rows: the only deployment in flight has one developer
+// and a single paired daemon, so the cost of re-pairing is trivial compared
+// to writing a non-trivial back-fill that could leak plaintext tokens.
+{
+  const cols = db.prepare(`PRAGMA table_info(device_tokens)`).all() as Array<{ name: string }>;
+  const hasLegacyTokenCol = cols.some((c) => c.name === 'token');
+  const hasNewIdCol = cols.some((c) => c.name === 'id');
+  if (hasLegacyTokenCol && !hasNewIdCol) {
+    console.warn('[db] migrating device_tokens to hashed shape — existing tokens will be invalidated, re-run `agent-client login` on each daemon');
+    db.exec(`
+      DROP TABLE device_tokens;
+      CREATE TABLE device_tokens (
+        id              TEXT PRIMARY KEY,
+        secret_hash     TEXT NOT NULL,
+        user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        display_name    TEXT,
+        created_at      INTEGER NOT NULL,
+        last_seen_at    INTEGER
+      );
+      CREATE INDEX idx_device_tokens_user ON device_tokens(user_id);
+    `);
+  }
+}
 
 console.log(`[db] opened ${DB_PATH}`);
 
@@ -123,7 +158,8 @@ export interface AgentMessageRow {
 }
 
 export interface DeviceTokenRow {
-  token: string;
+  id: string;
+  secret_hash: string;
   user_id: string;
   display_name: string | null;
   created_at: number;
@@ -132,7 +168,7 @@ export interface DeviceTokenRow {
 
 export interface PairingCodeRow {
   code: string;
-  status: 'pending' | 'approved' | 'denied' | 'expired';
+  status: 'pending' | 'approved' | 'claimed' | 'denied' | 'expired';
   user_id: string | null;
   device_token: string | null;
   device_name: string | null;
@@ -177,16 +213,26 @@ export const stmts = {
     SET status = 'approved', user_id = ?, device_token = ?
     WHERE code = ? AND status = 'pending'
   `),
+  // Mark a pairing row as having handed out its token. Combined with the
+  // status check in pairStatus, this guarantees the token is returned at
+  // most once per code — a second poll after approval will see 'claimed'.
+  claimPairingCode: db.prepare<[string]>(`
+    UPDATE pairing_codes
+    SET status = 'claimed', device_token = NULL
+    WHERE code = ? AND status = 'approved'
+  `),
   expireOldPairingCodes: db.prepare<[number]>(`
     UPDATE pairing_codes SET status = 'expired' WHERE status = 'pending' AND expires_at < ?
   `),
 
-  insertDeviceToken: db.prepare<[string, string, string | null, number]>(`
-    INSERT INTO device_tokens (token, user_id, display_name, created_at) VALUES (?, ?, ?, ?)
+  insertDeviceToken: db.prepare<[string, string, string, string | null, number]>(`
+    INSERT INTO device_tokens (id, secret_hash, user_id, display_name, created_at) VALUES (?, ?, ?, ?, ?)
   `),
-  findDeviceToken: db.prepare<[string], DeviceTokenRow>(`SELECT * FROM device_tokens WHERE token = ?`),
+  findDeviceTokenById: db.prepare<[string], DeviceTokenRow>(`
+    SELECT * FROM device_tokens WHERE id = ?
+  `),
   touchDeviceToken: db.prepare<[number, string]>(`
-    UPDATE device_tokens SET last_seen_at = ? WHERE token = ?
+    UPDATE device_tokens SET last_seen_at = ? WHERE id = ?
   `),
 
   // Agent sessions ─────────────────────────────────────────────────────────

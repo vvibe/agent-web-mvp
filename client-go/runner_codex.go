@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -26,6 +27,19 @@ func (r *codexRunner) Run(
 	emit func(role, text string, meta map[string]any),
 	_ func(requestID, toolName string, input any),
 ) (string, error) {
+	// Belt-and-suspenders gate: server already refuses to create codex
+	// sessions unless CODEX_TRUST_DEFAULTS=1, but the daemon enforces the
+	// same constraint locally so a misconfigured / out-of-date server can't
+	// trick us into running codex with whatever defaults it ships with.
+	if os.Getenv("CODEX_TRUST_DEFAULTS") != "1" {
+		msg := "Codex disabled: set CODEX_TRUST_DEFAULTS=1 on the daemon " +
+			"environment and configure CODEX_ARGS (e.g. " +
+			"`--sandbox read-only --ask-for-approval on-request`) before " +
+			"enabling. See README."
+		emit("system", msg, nil)
+		return "", fmt.Errorf("codex disabled by daemon policy")
+	}
+
 	bin := os.Getenv("CODEX_BIN")
 	if bin == "" {
 		bin = "codex"

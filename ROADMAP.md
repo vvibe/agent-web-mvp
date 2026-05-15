@@ -84,6 +84,40 @@ onboarding. Five immediate fixes:
 
 Body size on Express JSON is also capped at `1mb`.
 
+### M4.6 — Auth + abuse-surface hardening
+
+Follow-up to M4.5; closes the remaining critical/high items from the same
+audit before opening up CLI-driven onboarding.
+
+- **C-2** `pair-status` now returns the device token exactly once.
+  Approved row transitions to a new `claimed` status via
+  `claimPairingCode` *before* responding so a concurrent attacker poll on
+  the same code sees `claimed` instead of the token. Pairing code length
+  bumped from 8 → 12 chars over the same 32-symbol alphabet (~10^18
+  space).
+- **C-5** Device tokens are now `<id>.<secret>` (16+48 hex). `device_tokens`
+  table stores only `secret_hash = sha256(secret)` and looks up by `id`;
+  the `/client` upgrade verifies via constant-time compare. A leaked DB
+  cannot impersonate any daemon. One-shot migration in `db.ts` drops the
+  legacy row shape and forces an `agent-client login` on each daemon.
+- **C-4** Codex agent is gated behind `CODEX_TRUST_DEFAULTS=1`. Server
+  refuses to create codex sessions without it; daemon refuses to spawn
+  codex without it. Operator must consciously vouch for their
+  `CODEX_ARGS` (e.g. `--sandbox read-only --ask-for-approval on-request`)
+  before exposing Codex. Proper in-UI Codex permission flow is still
+  M5 P1.
+- **H-4** `claude-bridge.mjs` resolves the SDK from the bridge script's
+  directory and the Node global path only — the agent cwd is never
+  consulted. Closes the "clone a hostile repo, prompt Claude in it,
+  malicious `node_modules/@anthropic-ai/claude-agent-sdk` runs inside the
+  daemon" RCE.
+- **H-5** `express-rate-limit` on `/auth/github*`, `/api/device/pair-init`
+  (5/min/IP), `/api/device/pair-status` (90/min/IP). `app.set('trust proxy', 1)`
+  so Fly's edge IP doesn't collapse all clients into one bucket.
+
+After M4.6, the install-script milestone (GoReleaser + curl|sh / iwr|iex)
+can land safely.
+
 ---
 
 ## Open

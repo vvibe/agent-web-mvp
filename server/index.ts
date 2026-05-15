@@ -22,7 +22,8 @@ import {
   userIdFromCookie,
   type AuthedRequest,
 } from './auth.ts';
-import { pairInit, pairStatus, pairApprove, pairLookup } from './pairing.ts';
+import { pairInit, pairStatus, pairApprove, pairLookup, verifyDeviceToken } from './pairing.ts';
+import rateLimit from 'express-rate-limit';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -113,15 +114,44 @@ app.get('/api/health', (_req, res) => {
 });
 app.get('/api/me', whoAmI);
 
+// Rate limiters. Trust Fly's proxy hop so the limiter keys on the real
+// client IP, not the edge. Limits chosen well above the legitimate daemon /
+// browser cadence so a normal user never trips them.
+app.set('trust proxy', 1);
+const authLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many auth attempts; slow down.' },
+});
+const pairInitLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many pair-init requests; slow down.' },
+});
+const pairStatusLimiter = rateLimit({
+  // Daemon polls every 2s during a ≤10-min window → ~300 polls/code worst
+  // case. We allow 90/min per IP, plenty for one or two daemons, and well
+  // below what brute-forcing a 12-char code would need.
+  windowMs: 60_000,
+  limit: 90,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many pair-status polls; slow down.' },
+});
+
 // GitHub OAuth
-app.get('/auth/github', startOAuthLogin);
-app.get('/auth/github/callback', handleOAuthCallback);
+app.get('/auth/github', authLimiter, startOAuthLogin);
+app.get('/auth/github/callback', authLimiter, handleOAuthCallback);
 app.post('/auth/logout', logout);
 app.get('/auth/logout', logout); // browser convenience
 
 // Device pairing
-app.post('/api/device/pair-init', pairInit);
-app.get('/api/device/pair-status', pairStatus);
+app.post('/api/device/pair-init', pairInitLimiter, pairInit);
+app.get('/api/device/pair-status', pairStatusLimiter, pairStatus);
 app.get('/api/device/pair-lookup', requireAuth as any, pairLookup as any);
 app.post('/api/device/pair-approve', requireAuth as any, pairApprove as any);
 
@@ -178,9 +208,9 @@ httpServer.on('upgrade', (req, socket, head) => {
     if (!isAuthEnabled()) {
       userId = 'anon';
     } else if (token) {
-      const row = stmts.findDeviceToken.get(token);
+      const row = verifyDeviceToken(token);
       if (row) {
-        stmts.touchDeviceToken.run(Date.now(), token);
+        stmts.touchDeviceToken.run(Date.now(), row.id);
         userId = row.user_id;
       }
     }
@@ -367,6 +397,21 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
       send(ws, { type: 'sessions', sessions: store.listForUser(userId).map((s) => s.meta()) });
       return;
     case 'create_session': {
+      // Codex has no in-UI permission flow yet (M5 P1 will add it). Until then
+      // the operator must consciously vouch for their daemon's CODEX_ARGS
+      // (e.g. `--sandbox read-only --ask-for-approval on-request`) by setting
+      // CODEX_TRUST_DEFAULTS=1 on the server. The daemon enforces the same
+      // gate independently before spawning.
+      if (msg.agent === 'codex' && process.env.CODEX_TRUST_DEFAULTS !== '1') {
+        send(ws, {
+          type: 'error',
+          error:
+            'Codex agent is disabled by default. The operator must configure ' +
+            'CODEX_ARGS on the daemon and set CODEX_TRUST_DEFAULTS=1 on the ' +
+            'server to opt in. See README.',
+        });
+        return;
+      }
       // Only validate cwd against the server filesystem when there's no
       // daemon connected for this user — remote daemon paths live on the
       // user's machine, not the server.

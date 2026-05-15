@@ -12,10 +12,11 @@
 //   { "type": "permission_request", "requestId": "...", "toolName": "...", "input": {} }
 //   { "type": "done", "resumeToken": "?", "error": "?" }
 //
-// The bridge resolves @anthropic-ai/claude-agent-sdk from the working
-// directory's node_modules first (the user almost certainly has the `claude`
-// CLI installed in npm-global or alongside their project), then falls back
-// to global resolution.
+// SDK resolution is locked to daemon-controlled paths only — never the
+// agent cwd. The cwd is user-supplied and could point at a repo carrying a
+// malicious node_modules/@anthropic-ai/claude-agent-sdk; loading that would
+// execute attacker code inside the bridge before any of Claude's permission
+// gates ran. See ROADMAP.md M4.6 (H-4).
 
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
@@ -33,32 +34,30 @@ function fail(message) {
   process.exit(0);
 }
 
-async function loadSdk(cwd) {
-  // Prefer the SDK installed in the working directory (project-local install).
-  // Fall back to the bridge script's own require resolution (which sees the
-  // daemon's bundled deps if we ever ship them), and finally to a plain
-  // dynamic import which uses the current Node process's resolution.
-  const tryPaths = [
-    cwd,
-    process.cwd(),
-    path.dirname(fileURLToPath(import.meta.url)),
-  ];
-  for (const base of tryPaths) {
-    try {
-      const req = createRequire(path.join(base, 'package.json'));
-      const resolved = req.resolve('@anthropic-ai/claude-agent-sdk');
-      // On Windows, dynamic import() requires a file:// URL for absolute
-      // paths — `C:\...` fails with ERR_UNSUPPORTED_ESM_URL_SCHEME.
-      return await import(pathToFileURL(resolved).href);
-    } catch {
-      /* try next */
-    }
+async function loadSdk() {
+  // Resolve from the bridge script's own directory (where the daemon may
+  // ship a vendored SDK in node_modules) and then fall through to the Node
+  // global resolution. The agent cwd is *never* consulted: it's
+  // attacker-controllable and a hostile repo could otherwise drop a fake
+  // @anthropic-ai/claude-agent-sdk into node_modules/ and execute arbitrary
+  // code at import time, bypassing every permission gate downstream.
+  const bridgeDir = path.dirname(fileURLToPath(import.meta.url));
+  try {
+    const req = createRequire(path.join(bridgeDir, 'package.json'));
+    const resolved = req.resolve('@anthropic-ai/claude-agent-sdk');
+    // On Windows, dynamic import() requires a file:// URL for absolute
+    // paths — `C:\...` fails with ERR_UNSUPPORTED_ESM_URL_SCHEME.
+    return await import(pathToFileURL(resolved).href);
+  } catch {
+    /* fall through to bare-specifier resolution */
   }
   try {
     return await import('@anthropic-ai/claude-agent-sdk');
-  } catch (err) {
+  } catch {
     throw new Error(
-      '@anthropic-ai/claude-agent-sdk not found on this machine. Install it (npm i -g @anthropic-ai/claude-agent-sdk) and retry.',
+      '@anthropic-ai/claude-agent-sdk not found in daemon-controlled paths. ' +
+        'Install it alongside the daemon binary or globally — the agent ' +
+        'cwd is not consulted for SDK resolution.',
     );
   }
 }
@@ -99,7 +98,7 @@ stdin.on('close', () => {
 });
 
 async function runTurn(req) {
-  const { query } = await loadSdk(req.cwd);
+  const { query } = await loadSdk();
 
   let sdkSessionId = req.resume || undefined;
 
