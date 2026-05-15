@@ -16,6 +16,14 @@ const (
 	serviceDescription = "Connects local AI coding agents (Claude Code, Codex) to the Agent Web server."
 )
 
+// Version metadata. Overridden at build time via -ldflags "-X main.version=..."
+// by GoReleaser. The defaults below are what `go build` produces locally.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -45,7 +53,7 @@ func main() {
 	case "show-config":
 		runShowConfig()
 	case "version":
-		fmt.Println("agent-client 0.1.0")
+		fmt.Printf("agent-client %s (commit %s, built %s)\n", version, commit, date)
 	case "help", "-h", "--help":
 		printUsage()
 	default:

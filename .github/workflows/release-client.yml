@@ -1,0 +1,44 @@
+# Release workflow for the agent-client Go daemon.
+#
+# Trigger: push of any tag matching `client-v*` (e.g. `client-v0.1.0`).
+# We use a `client-` prefix so the server's own future version tags don't
+# accidentally drive a daemon release.
+#
+# GoReleaser builds the cross-platform binaries, attaches them to a GitHub
+# Release, and writes a `checksums.txt`. The install.sh / install.ps1
+# scripts hit `releases/latest/download/...` which always resolves to the
+# newest release (semver order, prereleases auto-tagged).
+
+name: release-client
+
+on:
+  push:
+    tags:
+      - 'client-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # GoReleaser needs full history for changelog
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+          cache-dependency-path: client-go/go.sum
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+          workdir: client-go
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

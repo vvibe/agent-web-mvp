@@ -1,0 +1,8 @@
+# Force LF for files that get served as-is to *nix machines. install.sh has
+# to be LF or `sh` chokes on CRLF; install.ps1 is PowerShell, either works
+# but LF keeps the served bytes deterministic across platforms.
+server/public/install.sh    text eol=lf
+server/public/install.ps1   text eol=lf
+client-go/.goreleaser.yaml  text eol=lf
+.github/workflows/*.yml     text eol=lf
+*.sh                        text eol=lf

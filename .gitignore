@@ -9,6 +9,7 @@ dist
 client-go/agent-client
 client-go/agent-client.exe
 client-go/agent-client.exe~
+client-go/agent-web-client.exe
 client-go/dist/
 
 # Editor

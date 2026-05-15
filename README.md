@@ -98,18 +98,52 @@ internet directly. Recommended:
 If you set `HOST=0.0.0.0`, anyone on the network can run code on your
 machine. Always pair that with one of the above.
 
+## Installing the daemon on a new machine
+
+The hosted server only renders the UI; it can't see your filesystem. To
+actually drive `claude` / `codex` against your code, install the
+`agent-client` daemon on each machine you want to drive from the web UI.
+
+One-line install from the hosted server (downloads a signed
+release tarball from GitHub, verifies sha256, drops the binary on PATH):
+
+```sh
+# macOS / Linux
+curl -fsSL https://agent-web-mvp-renddi.fly.dev/install.sh | sh
+
+# Windows (PowerShell, no admin needed for this step)
+iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex
+```
+
+Then pair the machine with your account:
+
+```sh
+agent-client login                  # opens the device-code flow
+agent-client install                # register as an OS service (Windows
+                                    #   needs Administrator PowerShell;
+                                    #   macOS / Linux do not)
+agent-client status                 # confirm it's running
+```
+
+The daemon stores its config under your user profile (`%AppData%\agent-web\`,
+`~/Library/Application Support/agent-web/`, `~/.config/agent-web/`) and
+auto-reconnects after reboots. Binaries are not yet code-signed — Windows
+SmartScreen / macOS Gatekeeper may warn on first run (M6 P1).
+
+If you want to build from source instead, see
+[`client-go/README.md`](./client-go/README.md).
+
 ## Known limitations (this MVP)
 
-- No auth — single-user assumption.
-- Codex sessions are stateless per prompt (no chat memory).
+- Codex sessions are stateless per prompt (no chat memory). Codex is
+  also gated behind `CODEX_TRUST_DEFAULTS=1` server-side until proper
+  in-UI permission flow lands.
 - Tool permission UI exists only for Claude.
 - No file diff viewer, no git integration, no notifications.
-- Session history is in-memory only (lost on server restart).
+- Daemon binaries are unsigned (SmartScreen / Gatekeeper warnings).
 
 These are intentional cuts to keep the MVP small. See [`ROADMAP.md`](./ROADMAP.md)
-for the prioritised next-step plan, including the SaaS pivot (move agent
-spawning into the daemon), cloud deployment, multi-user auth, and the
-remaining cross-platform validation work.
+for the prioritised next-step plan.
 
 ## Project layout
 

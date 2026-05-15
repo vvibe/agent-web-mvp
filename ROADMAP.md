@@ -118,6 +118,33 @@ audit before opening up CLI-driven onboarding.
 After M4.6, the install-script milestone (GoReleaser + curl|sh / iwr|iex)
 can land safely.
 
+### M4.8 — One-line daemon installer
+
+GoReleaser config (`client-go/.goreleaser.yaml`) builds the daemon for
+linux/darwin/windows × amd64/arm64, archives without version in the
+filename so `releases/latest/download/<asset>` always resolves, writes a
+`checksums.txt`. GitHub Actions workflow `.github/workflows/release-client.yml`
+fires on `client-v*` tags.
+
+`server/public/install.sh` and `install.ps1` are served by Express at
+`/install.sh` and `/install.ps1` (text/plain). They detect OS/arch,
+download from GitHub Releases, verify sha256, and place the binary
+on PATH. Neither runs `login` or `install` for the user — both need
+a TTY (or admin PowerShell) and surprising the user there is worse than
+the extra step.
+
+Daemon `main.go` learns `version`/`commit`/`date` vars set via ldflags.
+`agent-client version` now prints all three.
+
+The first usable URL is:
+
+```
+curl -fsSL https://agent-web-mvp-renddi.fly.dev/install.sh | sh
+iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex
+```
+
+To cut a release: `git tag client-v0.1.0 && git push --tags`.
+
 ---
 
 ## Open

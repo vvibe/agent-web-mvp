@@ -102,6 +102,23 @@ app.use((req, res, next) => {
   next();
 });
 
+// Static install scripts (install.sh / install.ps1) live under server/public.
+// Served with text/plain so `curl | sh` and `iwr | iex` get the raw content
+// and proxies / browsers don't try to render or transform them.
+const publicDir = path.resolve(__dirname, 'public');
+if (existsSync(publicDir)) {
+  app.use(
+    express.static(publicDir, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.sh') || filePath.endsWith('.ps1')) {
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.setHeader('Cache-Control', 'public, max-age=300');
+        }
+      },
+    }),
+  );
+}
+
 const distWeb = path.resolve(__dirname, '..', 'dist', 'web');
 if (existsSync(distWeb)) {
   app.use(express.static(distWeb));

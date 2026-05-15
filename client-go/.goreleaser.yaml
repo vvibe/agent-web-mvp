@@ -1,0 +1,78 @@
+# GoReleaser config for agent-client (the Agent Web daemon).
+#
+# Run from this directory:
+#   goreleaser release --snapshot --clean   # local test build
+#   goreleaser release --clean              # actual release (needs a v* tag)
+#
+# Driven from CI by .github/workflows/release-client.yml.
+
+version: 2
+
+project_name: agent-client
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: agent-client
+    main: .
+    binary: agent-client
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.date={{ .Date }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  # Drop the version from the archive name so install scripts can always
+  # fetch `releases/latest/download/agent-client_<os>_<arch>.<ext>` without
+  # having to know the current tag. GitHub still ties the asset to a versioned
+  # release on the Releases page itself.
+  - name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "0.0.0-dev-{{ .ShortCommit }}"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+
+release:
+  github:
+    owner: vvibe
+    name: agent-web-mvp
+  draft: false
+  prerelease: auto
+  name_template: "agent-client {{ .Version }}"
+  header: |
+    Built from commit {{ .ShortCommit }}.
+
+    Install (local server pairing — replace with your own host as needed):
+    ```
+    curl -fsSL https://agent-web-mvp-renddi.fly.dev/install.sh | sh
+    iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex
+    ```
