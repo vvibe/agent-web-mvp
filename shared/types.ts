@@ -48,7 +48,7 @@ export type ServerMessage =
   | { type: 'permission_resolved'; sessionId: string; requestId: string }
   | { type: 'error'; sessionId?: string; error: string };
 
-// ─── Daemon protocol (server ↔ local agent-client) ───────────────────────────
+// ─── Daemon protocol (server ↔ local vvibe daemon) ───────────────────────────
 //
 // One `runId` per server-initiated prompt. Daemon correlates streamed output,
 // permission requests, and cancel back to the right RemoteRunner via runId.

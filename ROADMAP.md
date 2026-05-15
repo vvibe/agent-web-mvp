@@ -118,7 +118,7 @@ audit before opening up CLI-driven onboarding.
 After M4.6, the install-script milestone (GoReleaser + curl|sh / iwr|iex)
 can land safely.
 
-### M4.8 — One-line daemon installer
+### M4.8 — One-line daemon installer + CLI rename to `vvibe`
 
 GoReleaser config (`client-go/.goreleaser.yaml`) builds the daemon for
 linux/darwin/windows × amd64/arm64, archives without version in the
@@ -143,7 +143,16 @@ curl -fsSL https://agent-web-mvp-renddi.fly.dev/install.sh | sh
 iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex
 ```
 
-To cut a release: `git tag client-v0.1.0 && git push --tags`.
+To cut a release: `git tag client-v0.1.0 && git push --tags`. The CI
+workflow pre-strips the `client-` prefix into `GORELEASER_CURRENT_TAG`
+because `monorepo.tag_prefix` is GoReleaser Pro-only.
+
+**Renamed** the CLI from `agent-client` to **`vvibe`** in the same pass:
+binary name, service ID (`Vvibe`), config dir (`~/.config/vvibe/`),
+asset filenames (`vvibe_<os>_<arch>.<ext>`), and every user-facing string
+in help/UI. Existing daemons must `uninstall` the old `AgentWebClient`
+service and re-pair; this is acceptable because M4.6 already forced a
+re-pair via the device-token hash migration.
 
 ---
 

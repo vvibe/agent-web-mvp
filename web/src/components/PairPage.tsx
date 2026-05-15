@@ -73,7 +73,7 @@ export function PairPage({ code, user }: Props) {
         {lookup.kind === 'not_found' && (
           <p className="error">
             No pairing code matches <code>{code}</code>. It may have expired — run{' '}
-            <code>agent-client login</code> again on your machine.
+            <code>vvibe login</code> again on your machine.
           </p>
         )}
         {lookup.kind === 'error' && <p className="error">Error: {lookup.message}</p>}
@@ -108,7 +108,7 @@ export function PairPage({ code, user }: Props) {
               </p>
             )}
             {lookup.status === 'expired' && (
-              <p className="error">This code has expired. Re-run <code>agent-client login</code>.</p>
+              <p className="error">This code has expired. Re-run <code>vvibe login</code>.</p>
             )}
             {lookup.status === 'denied' && (
               <p className="error">This code was denied.</p>

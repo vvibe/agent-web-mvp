@@ -1,11 +1,15 @@
-# Cross-platform build matrix for agent-client.
+# Cross-platform build matrix for vvibe (the daemon).
 # Usage:
 #   make            # native build
 #   make all        # full matrix into ./dist
 #   make tidy       # go mod tidy
 #   make clean
+#
+# Releases are driven by GoReleaser via GitHub Actions
+# (.github/workflows/release-client.yml) — this Makefile is for local builds
+# only.
 
-BINARY := agent-client
+BINARY := vvibe
 DIST   := dist
 LDFLAGS := -s -w
 

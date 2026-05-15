@@ -1,6 +1,6 @@
-// agent-client: cross-platform daemon that connects the local machine to the
-// Agent Web server. Handles its own OS-level service registration so it auto-
-// starts on boot (Windows Service / launchd / systemd --user).
+// vvibe: cross-platform daemon that connects the local machine to the
+// Agent Web server. Handles its own OS-level service registration so it
+// auto-starts on boot (Windows Service / launchd / systemd --user).
 package main
 
 import (
@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	serviceName        = "AgentWebClient"
-	serviceDisplayName = "Agent Web Client"
-	serviceDescription = "Connects local AI coding agents (Claude Code, Codex) to the Agent Web server."
+	serviceName        = "Vvibe"
+	serviceDisplayName = "Vvibe Daemon"
+	serviceDescription = "Connects local AI coding agents (Claude Code, Codex) to the Vvibe / Agent Web server."
 )
 
 // Version metadata. Overridden at build time via -ldflags "-X main.version=..."
@@ -53,7 +53,7 @@ func main() {
 	case "show-config":
 		runShowConfig()
 	case "version":
-		fmt.Printf("agent-client %s (commit %s, built %s)\n", version, commit, date)
+		fmt.Printf("vvibe %s (commit %s, built %s)\n", version, commit, date)
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -64,10 +64,10 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Print(`agent-client — local daemon for Agent Web
+	fmt.Print(`vvibe — local daemon for Agent Web
 
 Usage:
-  agent-client <command> [args]
+  vvibe <command> [args]
 
 Commands:
   install            Register this binary as an OS service (auto-start on boot)
@@ -84,9 +84,9 @@ Commands:
   help               Show this help
 
 Examples:
-  agent-client login --token=abc123 --server=ws://127.0.0.1:8787/client
-  sudo agent-client install        # macOS / Linux user-service usually does not need sudo
-  agent-client status
+  vvibe login --token=abc123 --server=ws://127.0.0.1:8787/client
+  sudo vvibe install        # macOS / Linux user-service usually does not need sudo
+  vvibe status
 `)
 }
 

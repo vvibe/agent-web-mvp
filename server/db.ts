@@ -108,7 +108,7 @@ db.prepare(`
   const hasLegacyTokenCol = cols.some((c) => c.name === 'token');
   const hasNewIdCol = cols.some((c) => c.name === 'id');
   if (hasLegacyTokenCol && !hasNewIdCol) {
-    console.warn('[db] migrating device_tokens to hashed shape — existing tokens will be invalidated, re-run `agent-client login` on each daemon');
+    console.warn('[db] migrating device_tokens to hashed shape — existing tokens will be invalidated, re-run `vvibe login` on each daemon');
     db.exec(`
       DROP TABLE device_tokens;
       CREATE TABLE device_tokens (

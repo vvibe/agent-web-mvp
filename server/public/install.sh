@@ -1,12 +1,12 @@
 #!/bin/sh
-# agent-client installer (macOS + Linux).
+# vvibe installer (macOS + Linux).
 #
 # Usage:
 #   curl -fsSL https://<server>/install.sh | sh
 #
 # What it does:
 #   1. Detects OS / arch
-#   2. Downloads the latest agent-client release tarball from GitHub
+#   2. Downloads the latest vvibe release tarball from GitHub
 #   3. Verifies the binary against checksums.txt
 #   4. Installs into /usr/local/bin (falls back to $HOME/.local/bin if
 #      /usr/local/bin isn't writable)
@@ -19,7 +19,8 @@
 set -eu
 
 REPO="vvibe/agent-web-mvp"
-ASSET_PREFIX="agent-client"
+ASSET_PREFIX="vvibe"
+BINARY="vvibe"
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -48,8 +49,8 @@ url="https://github.com/${REPO}/releases/latest/download/${asset}"
 checksums_url="https://github.com/${REPO}/releases/latest/download/checksums.txt"
 
 # ── Pick install location ──────────────────────────────────────────────────
-# Prefer /usr/local/bin so the daemon is on PATH for `agent-client` invocations
-# from any shell. Fall back to ~/.local/bin if we can't write there.
+# Prefer /usr/local/bin so the daemon is on PATH for `vvibe` invocations from
+# any shell. Fall back to ~/.local/bin if we can't write there.
 install_dir=/usr/local/bin
 if ! { [ -w "$install_dir" ] || ([ ! -e "$install_dir" ] && [ -w "$(dirname "$install_dir")" ]); }; then
   install_dir="$HOME/.local/bin"
@@ -94,31 +95,31 @@ fi
 log "Extracting"
 tar -xzf "$TMPDIR/$asset" -C "$TMPDIR"
 
-bin="$TMPDIR/agent-client"
-[ -f "$bin" ] || die "Extracted archive does not contain agent-client binary"
+bin="$TMPDIR/$BINARY"
+[ -f "$bin" ] || die "Extracted archive does not contain $BINARY binary"
 chmod +x "$bin"
 
-log "Installing to $install_dir/agent-client"
+log "Installing to $install_dir/$BINARY"
 if [ -w "$install_dir" ]; then
-  mv "$bin" "$install_dir/agent-client"
+  mv "$bin" "$install_dir/$BINARY"
 else
   log "  (sudo needed to write $install_dir)"
-  sudo mv "$bin" "$install_dir/agent-client"
+  sudo mv "$bin" "$install_dir/$BINARY"
 fi
 
 # ── Next steps ─────────────────────────────────────────────────────────────
 cat <<EOF
 
-Installed → $install_dir/agent-client
-Version:    $("$install_dir/agent-client" version 2>/dev/null || echo unknown)
+Installed → $install_dir/$BINARY
+Version:    $("$install_dir/$BINARY" version 2>/dev/null || echo unknown)
 
 Next:
   1. Pair this machine:
-       agent-client login
+       vvibe login
 
   2. Register as a service (auto-start on boot):
-       agent-client install
-       agent-client status
+       vvibe install
+       vvibe status
 
 For Windows: see install.ps1.
 Manual / source builds: https://github.com/$REPO/tree/main/client-go

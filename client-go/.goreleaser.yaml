@@ -1,31 +1,25 @@
-# GoReleaser config for agent-client (the Agent Web daemon).
+# GoReleaser config for `vvibe` (the Agent Web daemon binary).
 #
 # Run from this directory:
 #   goreleaser release --snapshot --clean   # local test build
 #   goreleaser release --clean              # actual release (needs a v* tag)
 #
-# Driven from CI by .github/workflows/release-client.yml.
+# Driven from CI by .github/workflows/release-client.yml. The CI workflow
+# strips the `client-` prefix from the git tag and passes the result via
+# $GORELEASER_CURRENT_TAG, so the YAML below sees a clean semver.
 
 version: 2
 
-project_name: agent-client
-
-# Tags look like `client-v0.1.0` — the `client-` prefix keeps the daemon's
-# release tags separate from any future server-side tags. monorepo.tag_prefix
-# tells GoReleaser to strip the prefix before semver parsing, so the actual
-# release version is just `0.1.0`. dir scopes the changelog to this subtree.
-monorepo:
-  tag_prefix: client-
-  dir: client-go
+project_name: vvibe
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: agent-client
+  - id: vvibe
     main: .
-    binary: agent-client
+    binary: vvibe
     env:
       - CGO_ENABLED=0
     flags:
@@ -40,8 +34,8 @@ builds:
 
 archives:
   # Drop the version from the archive name so install scripts can always
-  # fetch `releases/latest/download/agent-client_<os>_<arch>.<ext>` without
-  # having to know the current tag. GitHub still ties the asset to a versioned
+  # fetch `releases/latest/download/vvibe_<os>_<arch>.<ext>` without having
+  # to know the current tag. GitHub still ties the asset to a versioned
   # release on the Releases page itself.
   - name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
@@ -75,11 +69,11 @@ release:
     name: agent-web-mvp
   draft: false
   prerelease: auto
-  name_template: "agent-client {{ .Version }}"
+  name_template: "vvibe {{ .Version }}"
   header: |
     Built from commit {{ .ShortCommit }}.
 
-    Install (local server pairing — replace with your own host as needed):
+    Install (replace the host with your own deployment as needed):
     ```
     curl -fsSL https://agent-web-mvp-renddi.fly.dev/install.sh | sh
     iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex

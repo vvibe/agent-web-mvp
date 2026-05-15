@@ -4,7 +4,7 @@ import type { DeviceRegistry } from '../devices.ts';
 import type { AgentEvents, AgentRunner } from './base.ts';
 
 /**
- * AgentRunner that delegates execution to a connected daemon (agent-client)
+ * AgentRunner that delegates execution to a connected daemon (vvibe)
  * over the existing /client WebSocket. Server holds Claude's resume token
  * across runs; daemon is stateless between prompts.
  */
@@ -28,7 +28,7 @@ export class RemoteRunner implements AgentRunner {
   async send(prompt: string, resumeToken: string | undefined): Promise<void> {
     const device = this.registry.pickRunner(this.userId);
     if (!device) {
-      this.events.onError(new Error('No daemon connected. Start agent-client on your machine.'));
+      this.events.onError(new Error('No daemon connected. Run `vvibe login` and `vvibe install` on your machine.'));
       this.events.onDone();
       return;
     }

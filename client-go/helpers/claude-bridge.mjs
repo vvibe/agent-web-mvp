@@ -1,4 +1,4 @@
-// claude-bridge: Node child process spawned by agent-client (Go daemon) to
+// claude-bridge: Node child process spawned by vvibe (the Go daemon) to
 // drive the @anthropic-ai/claude-agent-sdk. The Go side speaks JSON-lines
 // over stdin/stdout. One bridge process handles one prompt turn, then exits.
 //

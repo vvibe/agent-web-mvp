@@ -26,7 +26,7 @@ func appDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "agent-web"), nil
+	return filepath.Join(base, "vvibe"), nil
 }
 
 func configPath() (string, error) {

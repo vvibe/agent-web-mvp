@@ -1,4 +1,5 @@
-# Release workflow for the agent-client Go daemon.
+# Release workflow for the `vvibe` Go daemon (the on-machine pairing agent
+# formerly known as `agent-client`).
 #
 # Trigger: push of any tag matching `client-v*` (e.g. `client-v0.1.0`).
 # We use a `client-` prefix so the server's own future version tags don't
@@ -33,6 +34,14 @@ jobs:
           cache: true
           cache-dependency-path: client-go/go.sum
 
+      # The repo tags daemon releases as `client-vX.Y.Z` so the prefix can
+      # distinguish them from any future server-side tags. GoReleaser OSS
+      # can't strip that prefix itself (monorepo.tag_prefix is Pro-only), so
+      # we pre-compute the stripped tag and feed it via GORELEASER_CURRENT_TAG.
+      - name: Strip tag prefix
+        id: tag
+        run: echo "version=${GITHUB_REF_NAME#client-}" >> "$GITHUB_OUTPUT"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -42,3 +51,4 @@ jobs:
           workdir: client-go
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.tag.outputs.version }}

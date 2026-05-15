@@ -22,14 +22,14 @@ func (p *program) Start(_ service.Service) error {
 	if err == nil {
 		p.logCl = closer
 	}
-	log.Printf("agent-client starting (pid=%d, os=%s)", os.Getpid(), runtimeLabel())
+	log.Printf("vvibe starting (pid=%d, os=%s)", os.Getpid(), runtimeLabel())
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	go p.run()
 	return nil
 }
 
 func (p *program) Stop(_ service.Service) error {
-	log.Println("agent-client stopping")
+	log.Println("vvibe stopping")
 	if p.cancel != nil {
 		p.cancel()
 	}
@@ -46,7 +46,7 @@ func (p *program) run() {
 		return
 	}
 	if cfg.Token == "" {
-		log.Println("no token configured — run `agent-client login --token=…` first. " +
+		log.Println("no token configured — run `vvibe login` first. " +
 			"daemon will keep retrying so once you set it, restart the service.")
 	}
 	runRelay(p.ctx, cfg)
@@ -62,7 +62,7 @@ func newService() (service.Service, error) {
 		DisplayName: serviceDisplayName,
 		Description: serviceDescription,
 		// Windows SCM launches the registered binary with the args we configure
-		// here. Without this, `agent-client.exe` is invoked with no args, hits
+		// here. Without this, `vvibe.exe` is invoked with no args, hits
 		// the "print usage and exit 2" branch in main, and SCM kills the service
 		// after the 30s start-timeout. The "run" subcommand calls svc.Run() so
 		// kardianos can talk to SCM properly.
@@ -90,7 +90,7 @@ func runInstall() {
 	fmt.Println("installed.")
 	if err := svc.Start(); err != nil {
 		fmt.Printf("warning: could not start immediately: %v\n", err)
-		fmt.Println("you can run `agent-client start` manually, or reboot.")
+		fmt.Println("you can run `vvibe start` manually, or reboot.")
 	} else {
 		fmt.Println("started.")
 	}

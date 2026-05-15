@@ -12,7 +12,7 @@ to it over WebSocket on `localhost`.
 ```
 ┌─────────────┐    /ws      ┌──────────────────┐    /client    ┌──────────────────┐
 │   Browser   │ ◄──────────►│  Node.js server  │◄─────────────►│  Go daemon       │
-│  (React)    │             │  (Express + ws)  │               │  (agent-client)  │
+│  (React)    │             │  (Express + ws)  │               │    (vvibe)       │
 └─────────────┘             └────────┬─────────┘               └────────┬─────────┘
                                      │ (current MVP spawns here)        │ (will move
                                      ▼                                  │  here next)
@@ -102,10 +102,10 @@ machine. Always pair that with one of the above.
 
 The hosted server only renders the UI; it can't see your filesystem. To
 actually drive `claude` / `codex` against your code, install the
-`agent-client` daemon on each machine you want to drive from the web UI.
+**`vvibe`** daemon on each machine you want to drive from the web UI.
 
-One-line install from the hosted server (downloads a signed
-release tarball from GitHub, verifies sha256, drops the binary on PATH):
+One-line install from the hosted server (downloads a release tarball from
+GitHub, verifies sha256, drops the binary on PATH):
 
 ```sh
 # macOS / Linux
@@ -118,17 +118,27 @@ iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex
 Then pair the machine with your account:
 
 ```sh
-agent-client login                  # opens the device-code flow
-agent-client install                # register as an OS service (Windows
-                                    #   needs Administrator PowerShell;
-                                    #   macOS / Linux do not)
-agent-client status                 # confirm it's running
+vvibe login                  # opens the device-code flow
+vvibe install                # register as an OS service (Windows
+                             #   needs Administrator PowerShell;
+                             #   macOS / Linux do not)
+vvibe status                 # confirm it's running
 ```
 
-The daemon stores its config under your user profile (`%AppData%\agent-web\`,
-`~/Library/Application Support/agent-web/`, `~/.config/agent-web/`) and
+The daemon stores its config under your user profile (`%AppData%\vvibe\`,
+`~/Library/Application Support/vvibe/`, `~/.config/vvibe/`) and
 auto-reconnects after reboots. Binaries are not yet code-signed — Windows
 SmartScreen / macOS Gatekeeper may warn on first run (M6 P1).
+
+### Updating
+
+Until `vvibe upgrade` lands (M4.9), updates are a manual re-install:
+
+```sh
+vvibe stop
+curl -fsSL https://agent-web-mvp-renddi.fly.dev/install.sh | sh   # or iwr ... | iex on Windows
+vvibe start
+```
 
 If you want to build from source instead, see
 [`client-go/README.md`](./client-go/README.md).
@@ -182,7 +192,7 @@ agent-web-mvp/
 Build & install on each OS (see `client-go/README.md` for details), then:
 
 1. Start the Node server: `npm run dev`.
-2. Run `agent-client install` on Windows / macOS / Linux.
+2. Run `vvibe install` on Windows / macOS / Linux.
 3. Reboot.
 4. Server console should print `[client] device registered: …` within ~5s.
 
