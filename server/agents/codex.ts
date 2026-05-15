@@ -56,7 +56,7 @@ export class CodexRunner implements AgentRunner {
     private readonly events: AgentEvents,
   ) {}
 
-  async send(prompt: string): Promise<void> {
+  async send(prompt: string, _resumeToken: string | undefined): Promise<void> {
     return new Promise<void>((resolve) => {
       const args = ['exec', ...CODEX_EXTRA_ARGS, prompt];
 

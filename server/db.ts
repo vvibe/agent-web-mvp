@@ -57,7 +57,37 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_browser_sessions_user ON browser_sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id);
+
+  CREATE TABLE IF NOT EXISTS agent_sessions (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    agent           TEXT NOT NULL,
+    cwd             TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    resume_token    TEXT,
+    created_at      INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS agent_messages (
+    id              TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+    role            TEXT NOT NULL,
+    text            TEXT NOT NULL,
+    meta            TEXT,
+    ts              INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_agent_sessions_user ON agent_sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_agent_messages_session_ts ON agent_messages(session_id, ts);
 `);
+
+// Seed a synthetic 'anon' user so dev mode (no GitHub OAuth) can satisfy
+// the FK constraints from agent_sessions etc. without bypassing them.
+db.prepare(`
+  INSERT INTO users (id, github_id, github_login, email, name, avatar_url, created_at)
+  VALUES ('anon', 0, 'anonymous', NULL, 'Anonymous (dev)', NULL, ?)
+  ON CONFLICT(id) DO NOTHING
+`).run(Date.now());
 
 console.log(`[db] opened ${DB_PATH}`);
 
@@ -71,6 +101,25 @@ export interface UserRow {
   name: string | null;
   avatar_url: string | null;
   created_at: number;
+}
+
+export interface AgentSessionRow {
+  id: string;
+  user_id: string;
+  agent: string;
+  cwd: string;
+  title: string;
+  resume_token: string | null;
+  created_at: number;
+}
+
+export interface AgentMessageRow {
+  id: string;
+  session_id: string;
+  role: string;
+  text: string;
+  meta: string | null;
+  ts: number;
 }
 
 export interface DeviceTokenRow {
@@ -138,5 +187,28 @@ export const stmts = {
   findDeviceToken: db.prepare<[string], DeviceTokenRow>(`SELECT * FROM device_tokens WHERE token = ?`),
   touchDeviceToken: db.prepare<[number, string]>(`
     UPDATE device_tokens SET last_seen_at = ? WHERE token = ?
+  `),
+
+  // Agent sessions ─────────────────────────────────────────────────────────
+  insertAgentSession: db.prepare<[string, string, string, string, string, number]>(`
+    INSERT INTO agent_sessions (id, user_id, agent, cwd, title, created_at) VALUES (?, ?, ?, ?, ?, ?)
+  `),
+  updateAgentSessionTitle: db.prepare<[string, string]>(`
+    UPDATE agent_sessions SET title = ? WHERE id = ?
+  `),
+  updateAgentSessionResumeToken: db.prepare<[string | null, string]>(`
+    UPDATE agent_sessions SET resume_token = ? WHERE id = ?
+  `),
+  deleteAgentSession: db.prepare<[string]>(`DELETE FROM agent_sessions WHERE id = ?`),
+  listAgentSessions: db.prepare<[], AgentSessionRow>(`
+    SELECT * FROM agent_sessions ORDER BY created_at ASC
+  `),
+
+  // Agent messages ─────────────────────────────────────────────────────────
+  insertAgentMessage: db.prepare<[string, string, string, string, string | null, number]>(`
+    INSERT INTO agent_messages (id, session_id, role, text, meta, ts) VALUES (?, ?, ?, ?, ?, ?)
+  `),
+  listAgentMessagesBySession: db.prepare<[string], AgentMessageRow>(`
+    SELECT * FROM agent_messages WHERE session_id = ? ORDER BY ts ASC, id ASC
   `),
 };

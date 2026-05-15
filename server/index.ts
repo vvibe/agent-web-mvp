@@ -241,6 +241,7 @@ const store = new SessionStore(
   },
   makeRunnerFactory(devices),
 );
+store.rehydrate();
 
 function send(ws: WebSocket, msg: ServerMessage) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));

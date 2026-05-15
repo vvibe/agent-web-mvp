@@ -9,7 +9,6 @@ import type { AgentEvents, AgentRunner } from './base.ts';
 // Claude session instead of a crash at boot.
 
 export class ClaudeRunner implements AgentRunner {
-  private sdkSessionId: string | undefined;
   private aborter: AbortController | undefined;
 
   constructor(
@@ -17,7 +16,7 @@ export class ClaudeRunner implements AgentRunner {
     private readonly events: AgentEvents,
   ) {}
 
-  async send(prompt: string): Promise<void> {
+  async send(prompt: string, resumeToken: string | undefined): Promise<void> {
     let queryFn: typeof import('@anthropic-ai/claude-agent-sdk').query;
     try {
       ({ query: queryFn } = await import('@anthropic-ai/claude-agent-sdk'));
@@ -38,7 +37,7 @@ export class ClaudeRunner implements AgentRunner {
         prompt,
         options: {
           cwd: this.cwd,
-          resume: this.sdkSessionId,
+          resume: resumeToken,
           abortController: this.aborter,
           canUseTool: async (toolName: string, input: unknown) => {
             const allowed = await this.events.onPermissionRequest({ toolName, input });
@@ -72,7 +71,7 @@ export class ClaudeRunner implements AgentRunner {
 
     switch (msg.type) {
       case 'system':
-        if (msg.session_id) this.sdkSessionId = msg.session_id;
+        if (msg.session_id) this.events.onResumeToken?.(msg.session_id);
         if (msg.subtype === 'init') {
           this.events.onMessage({
             role: 'system',
@@ -121,7 +120,7 @@ export class ClaudeRunner implements AgentRunner {
       }
 
       case 'result': {
-        if (msg.session_id) this.sdkSessionId = msg.session_id;
+        if (msg.session_id) this.events.onResumeToken?.(msg.session_id);
         if (msg.is_error) {
           this.events.onError(new Error(msg.result ?? 'Agent reported an error'));
         }

@@ -9,7 +9,6 @@ import type { AgentEvents, AgentRunner } from './base.ts';
  * across runs; daemon is stateless between prompts.
  */
 export class RemoteRunner implements AgentRunner {
-  private resumeToken: string | undefined;
   private activeRunId: string | undefined;
   // deviceId is resolved at send() time, not construction time, so that a
   // daemon reconnect (new device id) doesn't orphan existing sessions.
@@ -26,7 +25,7 @@ export class RemoteRunner implements AgentRunner {
     private readonly events: AgentEvents,
   ) {}
 
-  async send(prompt: string): Promise<void> {
+  async send(prompt: string, resumeToken: string | undefined): Promise<void> {
     const device = this.registry.pickRunner(this.userId);
     if (!device) {
       this.events.onError(new Error('No daemon connected. Start agent-client on your machine.'));
@@ -55,7 +54,7 @@ export class RemoteRunner implements AgentRunner {
       agent: this.agent,
       cwd: this.cwd,
       prompt,
-      resumeToken: this.resumeToken,
+      resumeToken,
     });
 
     if (!ok) {
@@ -108,7 +107,7 @@ export class RemoteRunner implements AgentRunner {
       }
 
       case 'daemon_done':
-        if (msg.resumeToken) this.resumeToken = msg.resumeToken;
+        if (msg.resumeToken) this.events.onResumeToken?.(msg.resumeToken);
         if (msg.error) this.events.onError(new Error(msg.error));
         this.cleanup();
         this.events.onDone();

@@ -7,10 +7,12 @@ import type {
   SessionStatus,
 } from '../shared/types.ts';
 import type { AgentEvents, AgentRunner } from './agents/base.ts';
+import type { AgentMessageRow, AgentSessionRow } from './db.ts';
 import { ClaudeRunner } from './agents/claude.ts';
 import { CodexRunner } from './agents/codex.ts';
 import { RemoteRunner } from './agents/remote.ts';
 import type { DeviceRegistry } from './devices.ts';
+import { stmts } from './db.ts';
 
 export type RunnerFactory = (
   userId: string,
@@ -20,21 +22,20 @@ export type RunnerFactory = (
 ) => AgentRunner;
 
 /**
- * Build a runner factory that prefers a connected daemon for the given user,
- * falling back to a local in-server runner when none is available. Daemons
- * belonging to other users are ignored.
+ * Build a runner factory:
+ *   - Authed users (anything except 'anon'): always RemoteRunner. The runner
+ *     re-resolves the daemon on each send(), so it's safe to create the
+ *     session before the daemon has connected. This also matters at boot:
+ *     rehydrated sessions are constructed before any daemon WS reconnects.
+ *   - Anonymous (dev mode without OAuth): fall back to local in-server
+ *     runners so `npm run dev` keeps working single-user.
  */
 export function makeRunnerFactory(devices: DeviceRegistry): RunnerFactory {
   return (userId, agent, cwd, events) => {
-    // Prefer remote even if no daemon is currently connected for this user —
-    // they may be about to start one. RemoteRunner re-resolves the device on
-    // each send(), so an empty per-user registry just yields a graceful "no
-    // daemon" error for the first prompt and recovers as soon as a daemon
-    // shows up.
-    if (devices.listForUser(userId).length > 0) {
-      return new RemoteRunner(userId, agent, cwd, devices, events);
+    if (userId === 'anon') {
+      return agent === 'claude' ? new ClaudeRunner(cwd, events) : new CodexRunner(cwd, events);
     }
-    return agent === 'claude' ? new ClaudeRunner(cwd, events) : new CodexRunner(cwd, events);
+    return new RemoteRunner(userId, agent, cwd, devices, events);
   };
 }
 
@@ -59,6 +60,8 @@ export class Session {
   status: SessionStatus = 'idle';
   createdAt: number;
   history: ChatMessage[] = [];
+  /** Latest resume token reported by the runner; persisted across restart. */
+  resumeToken: string | undefined;
 
   private runner: AgentRunner;
   private pending = new Map<string, PendingPermission>();
@@ -69,21 +72,32 @@ export class Session {
   private cancelling = false;
 
   constructor(
-    opts: { userId: string; agent: AgentKind; cwd: string; title?: string },
+    opts: {
+      id?: string;
+      userId: string;
+      agent: AgentKind;
+      cwd: string;
+      title?: string;
+      createdAt?: number;
+      resumeToken?: string;
+      history?: ChatMessage[];
+    },
     private events: SessionEvents,
     makeRunner: RunnerFactory,
   ) {
-    this.id = randomUUID();
+    this.id = opts.id ?? randomUUID();
     this.userId = opts.userId;
     this.agent = opts.agent;
     this.cwd = opts.cwd;
     this.title = opts.title?.trim() || defaultTitle(opts.agent, opts.cwd);
-    this.createdAt = Date.now();
+    this.createdAt = opts.createdAt ?? Date.now();
+    this.resumeToken = opts.resumeToken;
+    if (opts.history) this.history = opts.history;
 
-    const agentEvents = {
-      onMessage: (m: Omit<ChatMessage, 'id' | 'sessionId' | 'ts'>) => this.recordMessage(m),
-      onPermissionRequest: (r: { toolName: string; input: unknown }) => this.askPermission(r),
-      onError: (err: Error) => {
+    const agentEvents: AgentEvents = {
+      onMessage: (m) => this.recordMessage(m),
+      onPermissionRequest: (r) => this.askPermission(r),
+      onError: (err) => {
         if (this.cancelling) {
           // Expected: SDK threw because we aborted. Don't paint the session red.
           this.recordMessage({ role: 'system', text: 'Cancelled.' });
@@ -98,6 +112,11 @@ export class Session {
         this.busy = false;
         this.cancelling = false;
         this.drainQueue();
+      },
+      onResumeToken: (token) => {
+        if (token === this.resumeToken) return;
+        this.resumeToken = token;
+        stmts.updateAgentSessionResumeToken.run(token, this.id);
       },
     };
 
@@ -151,7 +170,7 @@ export class Session {
     if (!next) return;
     this.busy = true;
     this.setStatus('running');
-    await this.runner.send(next);
+    await this.runner.send(next, this.resumeToken);
   }
 
   private askPermission(req: { toolName: string; input: unknown }): Promise<boolean> {
@@ -176,6 +195,14 @@ export class Session {
       ...m,
     };
     this.history.push(full);
+    stmts.insertAgentMessage.run(
+      full.id,
+      full.sessionId,
+      full.role,
+      full.text,
+      full.meta ? JSON.stringify(full.meta) : null,
+      full.ts,
+    );
     this.events.onMessage(full);
   }
 
@@ -222,6 +249,9 @@ export class SessionStore {
 
   create(opts: { userId: string; agent: AgentKind; cwd: string; title?: string }): Session {
     const s = new Session(opts, this.events, this.makeRunner);
+    // Persist BEFORE the in-memory commit so a FK violation or any other DB
+    // error doesn't leave a phantom session in memory that fails on reload.
+    stmts.insertAgentSession.run(s.id, s.userId, s.agent, s.cwd, s.title, s.createdAt);
     this.sessions.set(s.id, s);
     this.events.onMeta(s);
     return s;
@@ -232,6 +262,55 @@ export class SessionStore {
     if (!s) return false;
     s.cancel();
     this.sessions.delete(id);
+    stmts.deleteAgentSession.run(id);
     return true;
+  }
+
+  /**
+   * Load all persisted sessions from the database and reconstruct in-memory
+   * Session objects with their full history. Run once at server start, BEFORE
+   * accepting browser connections. All sessions come back in 'idle' status —
+   * any in-flight runs that were interrupted by the restart are lost; the
+   * user just re-sends the prompt and Claude's resumeToken continues context.
+   */
+  rehydrate(): void {
+    const rows: AgentSessionRow[] = stmts.listAgentSessions.all();
+    for (const row of rows) {
+      const msgRows: AgentMessageRow[] = stmts.listAgentMessagesBySession.all(row.id);
+      const history: ChatMessage[] = msgRows.map((m) => ({
+        id: m.id,
+        sessionId: m.session_id,
+        ts: m.ts,
+        role: m.role as ChatMessage['role'],
+        text: m.text,
+        meta: m.meta ? safeParseJSON(m.meta) : undefined,
+      }));
+      const s = new Session(
+        {
+          id: row.id,
+          userId: row.user_id,
+          agent: row.agent as AgentKind,
+          cwd: row.cwd,
+          title: row.title,
+          createdAt: row.created_at,
+          resumeToken: row.resume_token ?? undefined,
+          history,
+        },
+        this.events,
+        this.makeRunner,
+      );
+      this.sessions.set(s.id, s);
+    }
+    if (rows.length > 0) {
+      console.log(`[sessions] rehydrated ${rows.length} session${rows.length === 1 ? '' : 's'}`);
+    }
+  }
+}
+
+function safeParseJSON(s: string): Record<string, unknown> | undefined {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return undefined;
   }
 }
