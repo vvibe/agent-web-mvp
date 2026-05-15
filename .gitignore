@@ -15,3 +15,6 @@ client-go/dist/
 .idea
 
 .claude
+
+# Smoke-test scratch
+tmp/
