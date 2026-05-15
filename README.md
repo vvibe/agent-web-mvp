@@ -106,12 +106,10 @@ machine. Always pair that with one of the above.
 - No file diff viewer, no git integration, no notifications.
 - Session history is in-memory only (lost on server restart).
 
-These are intentional cuts to keep the MVP small. Next milestones:
-
-1. Persist sessions + history to SQLite.
-2. Codex stream-json adapter with permission flow.
-3. File browser for choosing `cwd`.
-4. Multi-user auth + the reverse-tunnel client (the actual SaaS step).
+These are intentional cuts to keep the MVP small. See [`ROADMAP.md`](./ROADMAP.md)
+for the prioritised next-step plan, including the SaaS pivot (move agent
+spawning into the daemon), cloud deployment, multi-user auth, and the
+remaining cross-platform validation work.
 
 ## Project layout
 
