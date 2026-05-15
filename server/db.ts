@@ -221,8 +221,15 @@ export const stmts = {
     SET status = 'claimed', device_token = NULL
     WHERE code = ? AND status = 'approved'
   `),
+  // Expire both 'pending' codes (never approved) AND 'approved' codes whose
+  // daemon never polled to claim them. The latter matters because an approved
+  // row holds the plaintext token in device_token until claim — letting it
+  // sit forever would re-create the DB-leak primitive we eliminated by
+  // hashing device_tokens. NULL the column on sweep.
   expireOldPairingCodes: db.prepare<[number]>(`
-    UPDATE pairing_codes SET status = 'expired' WHERE status = 'pending' AND expires_at < ?
+    UPDATE pairing_codes
+    SET status = 'expired', device_token = NULL
+    WHERE status IN ('pending', 'approved') AND expires_at < ?
   `),
 
   insertDeviceToken: db.prepare<[string, string, string, string | null, number]>(`
