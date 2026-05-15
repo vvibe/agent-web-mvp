@@ -143,9 +143,11 @@ curl -fsSL https://agent-web-mvp-renddi.fly.dev/install.sh | sh
 iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex
 ```
 
-To cut a release: `git tag client-v0.1.0 && git push --tags`. The CI
-workflow pre-strips the `client-` prefix into `GORELEASER_CURRENT_TAG`
-because `monorepo.tag_prefix` is GoReleaser Pro-only.
+To cut a release: `git tag v0.1.0 && git push --tags`. We initially tried
+a `client-` prefix to separate daemon and server tags, but GoReleaser
+OSS rejects non-semver tags (its prefix-stripping `monorepo.tag_prefix`
+is Pro-only). If the server ever needs versioned tags later, give them
+a different prefix like `server-v*`.
 
 **Renamed** the CLI from `agent-client` to **`vvibe`** in the same pass:
 binary name, service ID (`Vvibe`), config dir (`~/.config/vvibe/`),

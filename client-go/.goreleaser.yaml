@@ -4,9 +4,10 @@
 #   goreleaser release --snapshot --clean   # local test build
 #   goreleaser release --clean              # actual release (needs a v* tag)
 #
-# Driven from CI by .github/workflows/release-client.yml. The CI workflow
-# strips the `client-` prefix from the git tag and passes the result via
-# $GORELEASER_CURRENT_TAG, so the YAML below sees a clean semver.
+# Driven from CI by .github/workflows/release-client.yml. Daemon tags are
+# plain `vX.Y.Z` (no prefix) so GoReleaser OSS can parse them as semver
+# directly. If we ever ship server-side versioned tags, give them a
+# distinguishing prefix like `server-v*`.
 
 version: 2
 
