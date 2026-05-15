@@ -10,6 +10,14 @@ version: 2
 
 project_name: agent-client
 
+# Tags look like `client-v0.1.0` — the `client-` prefix keeps the daemon's
+# release tags separate from any future server-side tags. monorepo.tag_prefix
+# tells GoReleaser to strip the prefix before semver parsing, so the actual
+# release version is just `0.1.0`. dir scopes the changelog to this subtree.
+monorepo:
+  tag_prefix: client-
+  dir: client-go
+
 before:
   hooks:
     - go mod tidy
