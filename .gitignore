@@ -13,3 +13,5 @@ client-go/dist/
 # Editor
 .vscode
 .idea
+
+.claude

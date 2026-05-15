@@ -35,6 +35,9 @@ export class Session {
   private pending = new Map<string, PendingPermission>();
   private queue: string[] = [];
   private busy = false;
+  // Set briefly while cancel() is in flight so onError can distinguish a
+  // user-initiated abort (= idle) from a real runtime failure (= error).
+  private cancelling = false;
 
   constructor(opts: { agent: AgentKind; cwd: string; title?: string }, private events: SessionEvents) {
     this.id = randomUUID();
@@ -47,6 +50,11 @@ export class Session {
       onMessage: (m: Omit<ChatMessage, 'id' | 'sessionId' | 'ts'>) => this.recordMessage(m),
       onPermissionRequest: (r: { toolName: string; input: unknown }) => this.askPermission(r),
       onError: (err: Error) => {
+        if (this.cancelling) {
+          // Expected: SDK threw because we aborted. Don't paint the session red.
+          this.recordMessage({ role: 'system', text: 'Cancelled.' });
+          return;
+        }
         this.setStatus('error');
         this.events.onError(this.id, err.message);
         this.recordMessage({ role: 'system', text: `Error: ${err.message}` });
@@ -54,6 +62,7 @@ export class Session {
       onDone: () => {
         if (this.status !== 'error') this.setStatus('idle');
         this.busy = false;
+        this.cancelling = false;
         this.drainQueue();
       },
     };
@@ -93,6 +102,7 @@ export class Session {
   }
 
   cancel() {
+    this.cancelling = true;
     this.runner.cancel();
     for (const [id, p] of this.pending) {
       p.resolve(false);

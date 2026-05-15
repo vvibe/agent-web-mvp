@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "nodemon --watch server --watch shared --ext ts,json --exec \"tsx server/index.ts\"",
     "dev:web": "vite",
     "dev": "concurrently -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
     "build": "vite build",
@@ -25,6 +25,7 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.3.0",
     "concurrently": "^9.1.0",
+    "nodemon": "^3.1.14",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "tsx": "^4.19.0",
