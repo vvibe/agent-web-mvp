@@ -1,19 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AgentKind, DeviceInfo } from '../../../shared/types';
+import type { WSClient } from '../ws';
+import { DirectoryPicker } from './DirectoryPicker';
 
 interface Props {
   defaultCwd: string;
   devices: DeviceInfo[];
+  ws: WSClient;
   onCancel: () => void;
   onCreate: (agent: AgentKind, cwd: string, title?: string, deviceId?: string) => void;
 }
 
-export function NewSessionDialog({ defaultCwd, devices, onCancel, onCreate }: Props) {
+export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }: Props) {
   const [agent, setAgent] = useState<AgentKind>('claude');
   const [cwd, setCwd] = useState(defaultCwd);
   const [title, setTitle] = useState('');
   // Empty string means "no preference" — server runs on first connected daemon.
   const [deviceId, setDeviceId] = useState<string>('');
+  const [showBrowser, setShowBrowser] = useState(false);
 
   // Agents available across the relevant devices. When the user picks a
   // specific device, only that one counts; with "Any" we union across all
@@ -95,13 +99,18 @@ export function NewSessionDialog({ defaultCwd, devices, onCancel, onCreate }: Pr
           )}
           <label>
             Working directory
-            <input
-              type="text"
-              value={cwd}
-              onChange={(e) => setCwd(e.target.value)}
-              placeholder="C:\path\to\repo"
-              required
-            />
+            <div className="cwd-row">
+              <input
+                type="text"
+                value={cwd}
+                onChange={(e) => setCwd(e.target.value)}
+                placeholder="C:\path\to\repo"
+                required
+              />
+              <button type="button" className="browse-btn" onClick={() => setShowBrowser(true)}>
+                Browse…
+              </button>
+            </div>
           </label>
           <label>
             Title (optional)
@@ -122,6 +131,19 @@ export function NewSessionDialog({ defaultCwd, devices, onCancel, onCreate }: Pr
           </div>
         </form>
       </div>
+      {showBrowser && (
+        <DirectoryPicker
+          ws={ws}
+          initialPath={cwd}
+          deviceId={deviceId || undefined}
+          devices={devices}
+          onCancel={() => setShowBrowser(false)}
+          onPick={(p) => {
+            setCwd(p);
+            setShowBrowser(false);
+          }}
+        />
+      )}
     </div>
   );
 }

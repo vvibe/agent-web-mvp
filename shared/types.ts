@@ -42,6 +42,13 @@ export interface DeviceInfo {
   connectedAt: number;
 }
 
+/** Directory entry returned by `list_dir`. Files are filtered server-side
+ *  since cwd must be a directory; only `isDir: true` entries reach the UI. */
+export interface DirEntry {
+  name: string;
+  isDir: boolean;
+}
+
 // ─── Client → Server ─────────────────────────────────────────────────────────
 export type ClientMessage =
   | { type: 'list_sessions' }
@@ -57,7 +64,18 @@ export type ClientMessage =
   | { type: 'send_prompt'; sessionId: string; prompt: string }
   | { type: 'permission_response'; sessionId: string; requestId: string; allow: boolean }
   | { type: 'cancel'; sessionId: string }
-  | { type: 'delete_session'; sessionId: string };
+  | { type: 'delete_session'; sessionId: string }
+  | {
+      type: 'list_dir';
+      requestId: string;
+      /** Pick which daemon to list against. When omitted, server lists its
+       *  own fs (anon dev mode). When the chosen device is offline, server
+       *  responds with an error rather than silently rerouting — picking a
+       *  different machine's tree mid-browse would be jarring. */
+      deviceId?: string;
+      /** Empty string = ask the daemon for its home dir. */
+      path: string;
+    };
 
 // ─── Server → Client ─────────────────────────────────────────────────────────
 export type ServerMessage =
@@ -70,6 +88,16 @@ export type ServerMessage =
   | { type: 'permission_request'; request: PermissionRequest }
   | { type: 'permission_resolved'; sessionId: string; requestId: string }
   | { type: 'devices'; devices: DeviceInfo[] }
+  | {
+      type: 'dir_listing';
+      requestId: string;
+      path: string;
+      /** Parent directory absolute path. Omitted when `path` is a root
+       *  (filesystem root on POSIX, drive letter on Windows). */
+      parent?: string;
+      entries: DirEntry[];
+      error?: string;
+    }
   | { type: 'error'; sessionId?: string; error: string };
 
 // ─── Daemon protocol (server ↔ local vvibe daemon) ───────────────────────────
@@ -95,6 +123,12 @@ export type DaemonServerMessage =
       runId: string;
       requestId: string;
       allow: boolean;
+    }
+  | {
+      type: 'daemon_list_dir';
+      requestId: string;
+      /** Empty string = daemon picks its home dir. */
+      path: string;
     };
 
 export type DaemonClientMessage =
@@ -116,5 +150,13 @@ export type DaemonClientMessage =
       type: 'daemon_done';
       runId: string;
       resumeToken?: string;
+      error?: string;
+    }
+  | {
+      type: 'daemon_dir_listing';
+      requestId: string;
+      path: string;
+      parent?: string;
+      entries: DirEntry[];
       error?: string;
     };

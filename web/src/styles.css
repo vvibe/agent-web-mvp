@@ -506,6 +506,68 @@ code {
   margin: 0 0 12px;
 }
 
+/* ─── Directory picker ────────────────────────────────────────────── */
+.cwd-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.cwd-row input { flex: 1; margin-top: 0; }
+.browse-btn {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 12px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.browse-btn:hover { background: var(--bg); }
+
+.dir-picker { min-width: 480px; }
+.dir-picker-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.dir-picker-header h3 { margin: 0; }
+.dir-picker-path {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  overflow-x: auto;
+}
+.dir-picker-path code {
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.dir-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+.dir-list li {
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.dir-list li:hover { background: var(--bg-elev-2); }
+.dir-list .dir-up { color: var(--text-dim); }
+.dir-list .dir-empty { cursor: default; }
+.dir-list .dir-empty:hover { background: transparent; }
+
 /* ─── Sidebar footer ──────────────────────────────────────────────── */
 .sidebar-footer {
   margin-top: auto;

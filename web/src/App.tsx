@@ -207,10 +207,11 @@ function MainApp({ me }: { me: Me }) {
         />
       )}
 
-      {showNew && (
+      {showNew && wsRef.current && (
         <NewSessionDialog
           defaultCwd={defaultCwd}
           devices={devices}
+          ws={wsRef.current}
           onCancel={() => setShowNew(false)}
           onCreate={(agent, cwd, title, deviceId) => {
             wsRef.current?.send({ type: 'create_session', agent, cwd, title, deviceId });

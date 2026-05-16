@@ -5,6 +5,8 @@ import helmet from 'helmet';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { existsSync, statSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ClientMessage, DaemonClientMessage, DeviceInfo, ServerMessage } from '../shared/types.ts';
@@ -293,6 +295,21 @@ clientWss.on('connection', (ws, req) => {
     ) {
       devices.dispatchDaemonMessage(deviceId, msg as DaemonClientMessage);
     }
+    // Dir listings ride a separate per-request map rather than the
+    // RemoteRunner dispatch; they're not tied to a session/runId.
+    if (deviceId && msg.type === 'daemon_dir_listing') {
+      const pending = pendingDirListings.get(msg.requestId);
+      if (!pending) return;
+      pendingDirListings.delete(msg.requestId);
+      send(pending.ws, {
+        type: 'dir_listing',
+        requestId: msg.requestId,
+        path: msg.path,
+        parent: msg.parent,
+        entries: msg.entries ?? [],
+        error: msg.error,
+      });
+    }
   });
 
   ws.on('close', () => {
@@ -335,6 +352,56 @@ function broadcastToUser(userId: string, msg: ServerMessage) {
   if (!set) return;
   const json = JSON.stringify(msg);
   for (const ws of set) if (ws.readyState === ws.OPEN) ws.send(json);
+}
+
+// ─── Directory browsing ──────────────────────────────────────────────────────
+// Map browser-issued requestId → browser ws so daemon_dir_listing can route
+// back to the right tab. TTL'd so a misbehaving daemon (or one running an
+// older binary that doesn't know daemon_list_dir) can't hang the picker
+// forever — we emit a timeout error back to the browser when sweeping.
+const DIR_LISTING_TTL_MS = 5_000;
+interface PendingDirListing {
+  ws: WebSocket;
+  path: string;
+  expiresAt: number;
+}
+const pendingDirListings = new Map<string, PendingDirListing>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, p] of pendingDirListings) {
+    if (p.expiresAt >= now) continue;
+    pendingDirListings.delete(id);
+    send(p.ws, {
+      type: 'dir_listing',
+      requestId: id,
+      path: p.path,
+      entries: [],
+      error: 'Daemon did not respond. Upgrade vvibe (`vvibe upgrade`) and retry.',
+    });
+  }
+}, 1_000).unref();
+
+async function listLocalDir(rawPath: string): Promise<{
+  path: string;
+  parent?: string;
+  entries: { name: string; isDir: boolean }[];
+  error?: string;
+}> {
+  let p = rawPath;
+  if (!p) p = os.homedir();
+  else if (!path.isAbsolute(p)) return { path: p, entries: [], error: 'path must be absolute' };
+  p = path.resolve(p);
+  try {
+    const items = await readdir(p, { withFileTypes: true });
+    const entries = items
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .map((e) => ({ name: e.name, isDir: true }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const parentDir = path.dirname(p);
+    return { path: p, parent: parentDir === p ? undefined : parentDir, entries };
+  } catch (err) {
+    return { path: p, entries: [], error: (err as Error).message };
+  }
 }
 
 function deviceInfo(userId: string): DeviceInfo[] {
@@ -495,6 +562,63 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
       if (store.delete(msg.sessionId)) {
         broadcastToUser(userId, { type: 'session_deleted', sessionId: msg.sessionId });
       }
+      return;
+    }
+    case 'list_dir': {
+      // Route order:
+      //   1. Explicit deviceId → forward to that daemon (after ownership check)
+      //   2. Any of the user's daemons connected → forward to the first
+      //   3. Anon dev mode without daemons → server-side fs (we want this for
+      //      `npm run dev` single-user workflows)
+      //   4. Authed user without daemons → error. Falling through to local fs
+      //      would let users browse the prod server's container fs, which
+      //      isn't useful and is a small leak surface.
+      const target = msg.deviceId ? devices.get(msg.deviceId) : devices.pickRunner(userId);
+      if (msg.deviceId && (!target || target.userId !== userId)) {
+        send(ws, {
+          type: 'dir_listing',
+          requestId: msg.requestId,
+          path: msg.path,
+          entries: [],
+          error: 'Unknown device.',
+        });
+        return;
+      }
+      if (target) {
+        pendingDirListings.set(msg.requestId, {
+          ws,
+          path: msg.path,
+          expiresAt: Date.now() + DIR_LISTING_TTL_MS,
+        });
+        const ok = devices.sendToDevice(target.id, {
+          type: 'daemon_list_dir',
+          requestId: msg.requestId,
+          path: msg.path,
+        });
+        if (!ok) {
+          pendingDirListings.delete(msg.requestId);
+          send(ws, {
+            type: 'dir_listing',
+            requestId: msg.requestId,
+            path: msg.path,
+            entries: [],
+            error: 'Daemon disconnected.',
+          });
+        }
+        return;
+      }
+      if (userId !== 'anon') {
+        send(ws, {
+          type: 'dir_listing',
+          requestId: msg.requestId,
+          path: msg.path,
+          entries: [],
+          error: 'No daemon connected. Pair a device first.',
+        });
+        return;
+      }
+      const local = await listLocalDir(msg.path);
+      send(ws, { type: 'dir_listing', requestId: msg.requestId, ...local });
       return;
     }
   }

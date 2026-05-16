@@ -187,6 +187,11 @@ func handleServerMessage(s *wsSender, msg map[string]any) {
 		reqId, _ := msg["requestId"].(string)
 		allow, _ := msg["allow"].(bool)
 		runs.permission(runId, reqId, allow)
+	case "daemon_list_dir":
+		// Runs inline since os.ReadDir is fast and we don't want to leak
+		// goroutines on a malformed/spammy server. If this ever blocks the
+		// reader loop, move to a worker pool.
+		handleListDir(s, msg)
 	default:
 		log.Printf("ignoring message type %q", t)
 	}
