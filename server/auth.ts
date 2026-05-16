@@ -4,7 +4,7 @@ import { stmts, type UserRow } from './db.ts';
 
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID ?? '';
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET ?? '';
-const PUBLIC_URL = process.env.PUBLIC_URL ?? 'http://127.0.0.1:8787';
+const PUBLIC_URL = process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 8787}`;
 const COOKIE_NAME = 'sid';
 const COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
