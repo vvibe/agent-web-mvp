@@ -32,6 +32,14 @@ builds:
       - -X main.date={{ .Date }}
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
+    hooks:
+      # Per-binary post-hook: sign Windows builds with osslsigncode if the
+      # certificate is present, sign+notarise macOS builds with rcodesign.
+      # Both are no-ops without their respective env vars, so snapshot
+      # builds and unsigned releases still work. See SIGNING.md.
+      post:
+        - cmd: ./scripts/sign-binary.sh {{ .Path }} {{ .Os }} {{ .Arch }}
+          dir: .
 
 archives:
   # Drop the version from the archive name so install scripts can always

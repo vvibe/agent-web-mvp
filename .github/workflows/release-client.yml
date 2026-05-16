@@ -10,6 +10,10 @@
 # Release, and writes a `checksums.txt`. The install.sh / install.ps1
 # scripts hit `releases/latest/download/...` which always resolves to the
 # newest release.
+#
+# Code signing is gated on the presence of secrets; without them the build
+# still completes and produces unsigned binaries (Gatekeeper / SmartScreen
+# will warn end users on first run). See client-go/SIGNING.md.
 
 name: release-client
 
@@ -35,6 +39,37 @@ jobs:
           cache: true
           cache-dependency-path: client-go/go.sum
 
+      # Install code-signing tools. Both are no-ops at runtime if the cert
+      # secrets aren't set, so this is safe even on unsigned releases.
+      - name: Install osslsigncode (Windows signing)
+        run: sudo apt-get update && sudo apt-get install -y osslsigncode
+
+      - name: Install rcodesign (macOS signing + notarisation)
+        run: |
+          curl -fsSL -o /tmp/rcodesign.tar.gz \
+            https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.27.0/apple-codesign-0.27.0-x86_64-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/rcodesign.tar.gz -C /tmp
+          sudo install /tmp/apple-codesign-*/rcodesign /usr/local/bin/rcodesign
+          rcodesign --version
+
+      # Materialise secrets to disk. Each step no-ops if its secret is missing
+      # (signing then falls through to a "skip" log in sign-binary.sh).
+      - name: Materialise Windows cert
+        if: env.WINDOWS_CERT_PFX_BASE64 != ''
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+        run: |
+          echo "$WINDOWS_CERT_PFX_BASE64" | base64 -d > /tmp/windows-cert.pfx
+          echo "WINDOWS_CERT_PATH=/tmp/windows-cert.pfx" >> "$GITHUB_ENV"
+
+      - name: Materialise macOS cert
+        if: env.MACOS_CERT_P12_BASE64 != ''
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+        run: |
+          echo "$MACOS_CERT_P12_BASE64" | base64 -d > /tmp/macos-cert.p12
+          echo "MACOS_CERT_PATH=/tmp/macos-cert.p12" >> "$GITHUB_ENV"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -44,3 +79,10 @@ jobs:
           workdir: client-go
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Windows signing
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          # macOS signing + notarisation
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_APPLE_ID:      ${{ secrets.MACOS_APPLE_ID }}
+          MACOS_TEAM_ID:       ${{ secrets.MACOS_TEAM_ID }}
+          MACOS_APP_PASSWORD:  ${{ secrets.MACOS_APP_PASSWORD }}
