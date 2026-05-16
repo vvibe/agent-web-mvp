@@ -61,7 +61,38 @@ npm run dev
 - Backend: http://127.0.0.1:8787
 - Frontend (Vite dev server with HMR): http://localhost:5173
 
-Open the frontend URL. Vite proxies `/ws` to the backend automatically.
+Open the frontend URL. Vite proxies `/ws`, `/api`, `/auth`, and the install
+scripts to the backend automatically.
+
+### Local dev modes (anonymous vs authenticated)
+
+Two flavours of local dev — pick based on what you're trying to test:
+
+**Anonymous mode** (no GitHub OAuth env vars, the default):
+- The whole app maps to a single synthetic `anon` user.
+- Sessions run **on the dev server itself** (local `ClaudeRunner` /
+  `CodexRunner` spawning your machine's `claude` / `codex` binaries).
+- A paired daemon, if any, shows up in the sidebar but is **decorative**:
+  `RemoteRunner` is bypassed for `anon`. So device pinning, daemon routing,
+  and the cwd directory picker (when targeting a remote daemon) are not
+  exercised in this mode.
+- Best for: iterating on chat UI, session list, prompts against your local
+  Claude/Codex.
+
+**Authenticated mode** (set `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET`):
+- Real GitHub OAuth + per-user device pairing. Sessions go through
+  `RemoteRunner` → daemon → agent CLI on the daemon's machine.
+- Setup: create a GitHub OAuth App
+  (https://github.com/settings/developers → New OAuth App) with:
+  - Homepage: `http://127.0.0.1:8787`
+  - Callback: `http://127.0.0.1:8787/auth/github/callback`
+  Then drop the credentials into `.env`.
+- Best for: testing the daemon path, multi-device picker, cwd browser,
+  permission flow, anything that touches `/client` WS.
+
+The two modes use the same SQLite DB but different `user_id`s (`anon`
+vs your GitHub UUID), so they don't interfere. Switching just means
+restarting the server after changing `.env`.
 
 ## Run (production build)
 
@@ -118,17 +149,35 @@ iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex
 Then pair the machine with your account:
 
 ```sh
-vvibe login                  # opens the device-code flow
-vvibe install                # register as an OS service (Windows
-                             #   needs Administrator PowerShell;
-                             #   macOS / Linux do not)
+vvibe login                  # pair: opens device-code flow, browser-side approval
+vvibe run                    # foreground run — verify it works before installing
+```
+
+You should immediately see the device appear in the web UI sidebar with a
+green dot. Ctrl-C to stop.
+
+To make the daemon auto-start at boot, register it as an OS service:
+
+```sh
+vvibe install                # macOS / Linux: no admin needed
+                             # Windows: needs Administrator PowerShell
 vvibe status                 # confirm it's running
 ```
+
+Skipping `install` is fine for casual / single-machine use — `vvibe run`
+in a terminal works the same way.
 
 The daemon stores its config under your user profile (`%AppData%\vvibe\`,
 `~/Library/Application Support/vvibe/`, `~/.config/vvibe/`) and
 auto-reconnects after reboots. Binaries are not yet code-signed — Windows
-SmartScreen / macOS Gatekeeper may warn on first run (M6 P1).
+SmartScreen / macOS Gatekeeper may warn on first run. The release
+pipeline is wired for signing once the certs exist; see
+[client-go/SIGNING.md](./client-go/SIGNING.md) for procurement + setup.
+
+The install scripts also check whether `claude` and `codex` are on PATH
+on the same machine, and report `[ok]` / `[--]` per agent. Missing CLIs
+won't block installation but will surface as `not installed` in the web
+UI's agent picker until you add them.
 
 ### Updating
 
