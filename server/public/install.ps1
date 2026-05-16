@@ -97,6 +97,28 @@ $ver = try { & $installedExe version } catch { 'unknown' }
 Write-Host ""
 Write-Host "Installed -> $installedExe"
 Write-Host "Version:     $ver"
+
+# ── Agent CLI detection ────────────────────────────────────────────────────
+# The vvibe daemon spawns claude / codex on PATH; missing ones simply won't
+# appear in the agent picker on the web UI. Surfaced here so the user sees
+# what's usable before pairing.
+Write-Step "Checking for agent CLIs"
+$missing = 0
+foreach ($tool in @('claude', 'codex')) {
+  $cmd = Get-Command $tool -ErrorAction SilentlyContinue
+  if ($cmd) {
+    $v = try { (& $tool --version 2>$null | Select-Object -First 1) } catch { '' }
+    if ($v) { Write-Host "   [ok] $tool ($v)" -ForegroundColor Green }
+    else    { Write-Host "   [ok] $tool"      -ForegroundColor Green }
+  } else {
+    Write-Host "   [--] $tool not found on PATH" -ForegroundColor Yellow
+    $missing++
+  }
+}
+if ($missing -gt 0) {
+  Write-Warn "Install the missing CLIs before sending prompts, or vvibe will report them as unavailable in the web UI."
+}
+
 Write-Host ""
 Write-Host "Next:"
 Write-Host "  1. Pair this machine:"

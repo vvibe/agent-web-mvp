@@ -23,10 +23,14 @@ export class RemoteRunner implements AgentRunner {
     private readonly cwd: string,
     private readonly registry: DeviceRegistry,
     private readonly events: AgentEvents,
+    /** When set, RemoteRunner prefers this device if connected. Falls back to
+     *  the first connected daemon otherwise — pinning a session to a device
+     *  shouldn't orphan it if the user happens to be on a different machine. */
+    private readonly preferredDeviceId?: string,
   ) {}
 
   async send(prompt: string, resumeToken: string | undefined): Promise<void> {
-    const device = this.registry.pickRunner(this.userId);
+    const device = this.pickDevice();
     if (!device) {
       this.events.onError(new Error('No daemon connected. Run `vvibe login` and `vvibe install` on your machine.'));
       this.events.onDone();
@@ -73,6 +77,14 @@ export class RemoteRunner implements AgentRunner {
       type: 'daemon_cancel',
       runId: this.activeRunId,
     });
+  }
+
+  private pickDevice() {
+    if (this.preferredDeviceId) {
+      const preferred = this.registry.get(this.preferredDeviceId);
+      if (preferred && preferred.userId === this.userId) return preferred;
+    }
+    return this.registry.pickRunner(this.userId);
   }
 
   private handleDaemonMessage(msg: DaemonClientMessage): void {

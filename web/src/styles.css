@@ -431,6 +431,81 @@ code {
   text-decoration: none;
 }
 
+/* ─── Devices panel ───────────────────────────────────────────────── */
+.devices-panel {
+  border-top: 1px solid var(--border);
+  padding: 10px 14px;
+  font-size: 12px;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.devices-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  margin-bottom: 8px;
+}
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dot-on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot-off { background: var(--red); }
+
+.devices-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.devices-list li {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.device-name { font-weight: 500; }
+.device-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
+
+.devices-empty p {
+  margin: 0 0 6px;
+  font-size: 11px;
+}
+.install-cmd {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 0 0 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--text);
+}
+
+.modal .warning {
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: var(--red);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+
 /* ─── Sidebar footer ──────────────────────────────────────────────── */
 .sidebar-footer {
   margin-top: auto;

@@ -9,6 +9,9 @@ export interface SessionMeta {
   title: string;
   status: SessionStatus;
   createdAt: number;
+  /** Device this session is pinned to; runner falls back to any connected
+   *  daemon if it's offline. Undefined = no pin (first-connected wins). */
+  preferredDeviceId?: string;
 }
 
 export interface ChatMessage {
@@ -27,10 +30,30 @@ export interface PermissionRequest {
   input: unknown;
 }
 
+/** Connected daemon as visible to the browser. */
+export interface DeviceInfo {
+  id: string;
+  hostname: string;
+  displayName?: string;
+  os: string;
+  arch: string;
+  version: string;
+  agents: Array<{ name: string; path: string }>;
+  connectedAt: number;
+}
+
 // ─── Client → Server ─────────────────────────────────────────────────────────
 export type ClientMessage =
   | { type: 'list_sessions' }
-  | { type: 'create_session'; agent: AgentKind; cwd: string; title?: string }
+  | {
+      type: 'create_session';
+      agent: AgentKind;
+      cwd: string;
+      title?: string;
+      /** Pin this session to a specific daemon. Falls back to first connected
+       *  if the chosen device is offline at send time. */
+      deviceId?: string;
+    }
   | { type: 'send_prompt'; sessionId: string; prompt: string }
   | { type: 'permission_response'; sessionId: string; requestId: string; allow: boolean }
   | { type: 'cancel'; sessionId: string }
@@ -46,6 +69,7 @@ export type ServerMessage =
   | { type: 'message'; message: ChatMessage }
   | { type: 'permission_request'; request: PermissionRequest }
   | { type: 'permission_resolved'; sessionId: string; requestId: string }
+  | { type: 'devices'; devices: DeviceInfo[] }
   | { type: 'error'; sessionId?: string; error: string };
 
 // ─── Daemon protocol (server ↔ local vvibe daemon) ───────────────────────────

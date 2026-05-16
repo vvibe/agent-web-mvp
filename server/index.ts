@@ -7,7 +7,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ClientMessage, DaemonClientMessage, ServerMessage } from '../shared/types.ts';
+import type { ClientMessage, DaemonClientMessage, DeviceInfo, ServerMessage } from '../shared/types.ts';
 import { SessionStore, makeRunnerFactory, type Session } from './sessions.ts';
 import { DeviceRegistry, type DeviceHello } from './devices.ts';
 import { stmts } from './db.ts';
@@ -337,10 +337,21 @@ function broadcastToUser(userId: string, msg: ServerMessage) {
   for (const ws of set) if (ws.readyState === ws.OPEN) ws.send(json);
 }
 
+function deviceInfo(userId: string): DeviceInfo[] {
+  return devices.listForUser(userId).map((d) => ({
+    id: d.id,
+    hostname: d.hostname,
+    displayName: d.displayName,
+    os: d.os,
+    arch: d.arch,
+    version: d.version,
+    agents: d.agents,
+    connectedAt: d.connectedAt,
+  }));
+}
+
 function broadcastDevices(userId: string) {
-  // Just retrigger a sessions update so the UI can re-fetch device list via
-  // /api/me + WS. Simpler than a dedicated message until we add a devices
-  // panel.
+  broadcastToUser(userId, { type: 'devices', devices: deviceInfo(userId) });
 }
 
 const store = new SessionStore(
@@ -386,6 +397,7 @@ browserWss.on('connection', (ws) => {
   addBrowser(userId, ws);
 
   send(ws, { type: 'hello', defaultCwd: DEFAULT_CWD });
+  send(ws, { type: 'devices', devices: deviceInfo(userId) });
   const userSessions = store.listForUser(userId);
   send(ws, { type: 'sessions', sessions: userSessions.map((s) => s.meta()) });
   for (const s of userSessions) {
@@ -437,7 +449,25 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
         send(ws, { type: 'error', error: `Directory does not exist: ${msg.cwd}` });
         return;
       }
-      const s = store.create({ userId, agent: msg.agent, cwd: msg.cwd, title: msg.title });
+      // If the browser pinned a device, verify it belongs to this user before
+      // persisting. We keep the value even if the device is currently offline:
+      // RemoteRunner will fall back to first-connected at send() time.
+      let preferredDeviceId: string | undefined;
+      if (msg.deviceId) {
+        const d = devices.get(msg.deviceId);
+        if (!d || d.userId !== userId) {
+          send(ws, { type: 'error', error: 'Unknown device.' });
+          return;
+        }
+        preferredDeviceId = msg.deviceId;
+      }
+      const s = store.create({
+        userId,
+        agent: msg.agent,
+        cwd: msg.cwd,
+        title: msg.title,
+        preferredDeviceId,
+      });
       send(ws, { type: 'session_created', session: s.meta() });
       return;
     }

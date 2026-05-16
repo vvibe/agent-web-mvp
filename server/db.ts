@@ -68,13 +68,14 @@ db.exec(`
   -- column-free shape; the migration block below handles it.
 
   CREATE TABLE IF NOT EXISTS agent_sessions (
-    id              TEXT PRIMARY KEY,
-    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    agent           TEXT NOT NULL,
-    cwd             TEXT NOT NULL,
-    title           TEXT NOT NULL,
-    resume_token    TEXT,
-    created_at      INTEGER NOT NULL
+    id                    TEXT PRIMARY KEY,
+    user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    agent                 TEXT NOT NULL,
+    cwd                   TEXT NOT NULL,
+    title                 TEXT NOT NULL,
+    resume_token          TEXT,
+    preferred_device_id   TEXT,
+    created_at            INTEGER NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS agent_messages (
@@ -97,6 +98,16 @@ db.prepare(`
   VALUES ('anon', 0, 'anonymous', NULL, 'Anonymous (dev)', NULL, ?)
   ON CONFLICT(id) DO NOTHING
 `).run(Date.now());
+
+// Additive migration: agent_sessions.preferred_device_id (added when the web
+// UI got a device picker). CREATE TABLE IF NOT EXISTS won't touch an existing
+// table, so add the column when missing.
+{
+  const cols = db.prepare(`PRAGMA table_info(agent_sessions)`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'preferred_device_id')) {
+    db.exec(`ALTER TABLE agent_sessions ADD COLUMN preferred_device_id TEXT`);
+  }
+}
 
 // One-shot migration from the M3 device_tokens shape (PK was raw token) to
 // the hashed-secret shape introduced in M4.6. We detect the legacy column
@@ -145,6 +156,7 @@ export interface AgentSessionRow {
   cwd: string;
   title: string;
   resume_token: string | null;
+  preferred_device_id: string | null;
   created_at: number;
 }
 
@@ -243,8 +255,12 @@ export const stmts = {
   `),
 
   // Agent sessions ─────────────────────────────────────────────────────────
-  insertAgentSession: db.prepare<[string, string, string, string, string, number]>(`
-    INSERT INTO agent_sessions (id, user_id, agent, cwd, title, created_at) VALUES (?, ?, ?, ?, ?, ?)
+  insertAgentSession: db.prepare<[string, string, string, string, string, string | null, number]>(`
+    INSERT INTO agent_sessions (id, user_id, agent, cwd, title, preferred_device_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `),
+  updateAgentSessionPreferredDevice: db.prepare<[string | null, string]>(`
+    UPDATE agent_sessions SET preferred_device_id = ? WHERE id = ?
   `),
   updateAgentSessionTitle: db.prepare<[string, string]>(`
     UPDATE agent_sessions SET title = ? WHERE id = ?

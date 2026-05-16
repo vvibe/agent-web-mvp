@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ChatMessage,
+  DeviceInfo,
   PermissionRequest,
   ServerMessage,
   SessionMeta,
@@ -12,6 +13,7 @@ import { PermissionModal } from './components/PermissionModal';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { LoginGate } from './components/LoginGate';
 import { PairPage } from './components/PairPage';
+import { DevicesPanel } from './components/DevicesPanel';
 
 interface Me {
   authenticated: boolean;
@@ -67,6 +69,7 @@ function MainApp({ me }: { me: Me }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
   const [showNew, setShowNew] = useState(false);
+  const [devices, setDevices] = useState<DeviceInfo[]>([]);
 
   useEffect(() => {
     const ws = new WSClient(makeWsUrl());
@@ -121,6 +124,9 @@ function MainApp({ me }: { me: Me }) {
           prev.filter((p) => p.requestId !== msg.requestId),
         );
         break;
+      case 'devices':
+        setDevices(msg.devices);
+        break;
       case 'error':
         console.error('[server error]', msg.error);
         break;
@@ -152,6 +158,7 @@ function MainApp({ me }: { me: Me }) {
           onSelect={setActiveId}
           onDelete={(id) => wsRef.current?.send({ type: 'delete_session', sessionId: id })}
         />
+        <DevicesPanel devices={devices} />
         <div className="sidebar-footer">
           {me.user && (
             <>
@@ -203,9 +210,10 @@ function MainApp({ me }: { me: Me }) {
       {showNew && (
         <NewSessionDialog
           defaultCwd={defaultCwd}
+          devices={devices}
           onCancel={() => setShowNew(false)}
-          onCreate={(agent, cwd, title) => {
-            wsRef.current?.send({ type: 'create_session', agent, cwd, title });
+          onCreate={(agent, cwd, title, deviceId) => {
+            wsRef.current?.send({ type: 'create_session', agent, cwd, title, deviceId });
             setShowNew(false);
           }}
         />

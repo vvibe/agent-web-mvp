@@ -19,6 +19,7 @@ export type RunnerFactory = (
   agent: AgentKind,
   cwd: string,
   events: AgentEvents,
+  preferredDeviceId: string | undefined,
 ) => AgentRunner;
 
 /**
@@ -31,11 +32,11 @@ export type RunnerFactory = (
  *     runners so `npm run dev` keeps working single-user.
  */
 export function makeRunnerFactory(devices: DeviceRegistry): RunnerFactory {
-  return (userId, agent, cwd, events) => {
+  return (userId, agent, cwd, events, preferredDeviceId) => {
     if (userId === 'anon') {
       return agent === 'claude' ? new ClaudeRunner(cwd, events) : new CodexRunner(cwd, events);
     }
-    return new RemoteRunner(userId, agent, cwd, devices, events);
+    return new RemoteRunner(userId, agent, cwd, devices, events, preferredDeviceId);
   };
 }
 
@@ -62,6 +63,9 @@ export class Session {
   history: ChatMessage[] = [];
   /** Latest resume token reported by the runner; persisted across restart. */
   resumeToken: string | undefined;
+  /** Device the session is pinned to (RemoteRunner falls back to first
+   *  connected if it's offline). Undefined = no pin. */
+  preferredDeviceId: string | undefined;
 
   private runner: AgentRunner;
   private pending = new Map<string, PendingPermission>();
@@ -80,6 +84,7 @@ export class Session {
       title?: string;
       createdAt?: number;
       resumeToken?: string;
+      preferredDeviceId?: string;
       history?: ChatMessage[];
     },
     private events: SessionEvents,
@@ -92,6 +97,7 @@ export class Session {
     this.title = opts.title?.trim() || defaultTitle(opts.agent, opts.cwd);
     this.createdAt = opts.createdAt ?? Date.now();
     this.resumeToken = opts.resumeToken;
+    this.preferredDeviceId = opts.preferredDeviceId;
     if (opts.history) this.history = opts.history;
 
     const agentEvents: AgentEvents = {
@@ -120,7 +126,7 @@ export class Session {
       },
     };
 
-    this.runner = makeRunner(opts.userId, opts.agent, this.cwd, agentEvents);
+    this.runner = makeRunner(opts.userId, opts.agent, this.cwd, agentEvents, this.preferredDeviceId);
   }
 
   meta(): SessionMeta {
@@ -131,6 +137,7 @@ export class Session {
       title: this.title,
       status: this.status,
       createdAt: this.createdAt,
+      preferredDeviceId: this.preferredDeviceId,
     };
   }
 
@@ -247,11 +254,25 @@ export class SessionStore {
     return s && s.userId === userId ? s : undefined;
   }
 
-  create(opts: { userId: string; agent: AgentKind; cwd: string; title?: string }): Session {
+  create(opts: {
+    userId: string;
+    agent: AgentKind;
+    cwd: string;
+    title?: string;
+    preferredDeviceId?: string;
+  }): Session {
     const s = new Session(opts, this.events, this.makeRunner);
     // Persist BEFORE the in-memory commit so a FK violation or any other DB
     // error doesn't leave a phantom session in memory that fails on reload.
-    stmts.insertAgentSession.run(s.id, s.userId, s.agent, s.cwd, s.title, s.createdAt);
+    stmts.insertAgentSession.run(
+      s.id,
+      s.userId,
+      s.agent,
+      s.cwd,
+      s.title,
+      s.preferredDeviceId ?? null,
+      s.createdAt,
+    );
     this.sessions.set(s.id, s);
     this.events.onMeta(s);
     return s;
@@ -294,6 +315,7 @@ export class SessionStore {
           title: row.title,
           createdAt: row.created_at,
           resumeToken: row.resume_token ?? undefined,
+          preferredDeviceId: row.preferred_device_id ?? undefined,
           history,
         },
         this.events,
