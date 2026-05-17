@@ -109,6 +109,11 @@ async function runTurn(req) {
         cwd: req.cwd,
         resume: sdkSessionId,
         abortController: aborter,
+        // Hard cap on tool-use turns per prompt. Defense against prompt
+        // injection (e.g. a README that tricks Claude into chained reads)
+        // and against runaway agent loops chewing through tokens. 25 is
+        // plenty for normal coding tasks — most prompts resolve in <10.
+        maxTurns: 25,
         canUseTool: (toolName, input) => askPermission(toolName, input),
         // Use Claude Code's full default system prompt so the model is told
         // its working directory, git status, etc. Without this, Claude has

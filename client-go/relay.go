@@ -9,16 +9,37 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
+// maxRunDuration is the wall-clock cap for a single prompt turn, honoring
+// the VVIBE_MAX_RUN_SECONDS override. Bad/zero/negative env values fall
+// back to defaultMaxRunDuration silently — we'd rather over-cap than let
+// a typo turn the safeguard off.
+func maxRunDuration() time.Duration {
+	if raw := os.Getenv("VVIBE_MAX_RUN_SECONDS"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return defaultMaxRunDuration
+}
+
 const (
 	pingInterval = 30 * time.Second
 	pongTimeout  = 60 * time.Second
 	writeTimeout = 10 * time.Second
+
+	// Wall-clock cap on a single prompt turn. Backstops the "sleeping tab
+	// keeps an agent looping forever" / "prompt-injection-driven runaway
+	// tool use" cases — combined with maxTurns on the SDK side, a single
+	// run can't quietly chew through tokens for hours. Override per-machine
+	// with VVIBE_MAX_RUN_SECONDS.
+	defaultMaxRunDuration = 30 * time.Minute
 )
 
 // runs tracks in-flight prompt turns by runId so daemon_cancel and
@@ -220,7 +241,7 @@ func handleRunPrompt(s *wsSender, msg map[string]any) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), maxRunDuration())
 	runs.start(runId, runner, cancel)
 
 	emit := func(role, text string, meta map[string]any) {
@@ -259,8 +280,18 @@ func handleRunPrompt(s *wsSender, msg map[string]any) {
 		if newResume != "" {
 			done["resumeToken"] = newResume
 		}
+		// Translate context.DeadlineExceeded into a user-readable message
+		// before surfacing it; "context deadline exceeded" reads like an
+		// internal panic. context.Canceled is suppressed because that's
+		// the normal user-pressed-Cancel path.
 		if runErr != nil && !errors.Is(runErr, context.Canceled) {
-			done["error"] = runErr.Error()
+			if errors.Is(runErr, context.DeadlineExceeded) {
+				done["error"] = "Run hit the wall-clock limit (" +
+					maxRunDuration().String() +
+					") and was aborted. Override with VVIBE_MAX_RUN_SECONDS."
+			} else {
+				done["error"] = runErr.Error()
+			}
 		}
 		logRunErr(runId, runErr)
 		_ = s.send(done)

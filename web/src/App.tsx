@@ -138,6 +138,16 @@ function MainApp({ me }: { me: Me }) {
     [sessions],
   );
 
+  // Count anything that could be burning tokens right now — drives the
+  // "Stop all" emergency-brake button visibility.
+  const runningCount = useMemo(
+    () =>
+      sessionList.filter(
+        (s) => s.status === 'running' || s.status === 'awaiting_permission',
+      ).length,
+    [sessionList],
+  );
+
   const activeSession = activeId ? sessions[activeId] : undefined;
   const activeMessages = activeId ? (messages[activeId] ?? []) : [];
 
@@ -159,11 +169,39 @@ function MainApp({ me }: { me: Me }) {
           onDelete={(id) => wsRef.current?.send({ type: 'delete_session', sessionId: id })}
         />
         <DevicesPanel devices={devices} />
+        {runningCount > 0 && (
+          <div className="sidebar-stop-all">
+            <button
+              type="button"
+              className="stop-all-btn"
+              onClick={() => {
+                if (
+                  confirm(
+                    `Cancel ${runningCount} running session${runningCount === 1 ? '' : 's'}? This stops the agent immediately.`,
+                  )
+                ) {
+                  wsRef.current?.send({ type: 'cancel_all' });
+                }
+              }}
+              title="Cancel every running session in one click — emergency brake."
+            >
+              Stop all ({runningCount})
+            </button>
+          </div>
+        )}
         <div className="sidebar-footer">
           {me.user && (
             <>
               <span className="muted user-login">{me.user.login}</span>
-              <a className="logout" href="/auth/logout">Sign out</a>
+              <button
+                className="logout link-button"
+                onClick={async () => {
+                  await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+                  window.location.href = '/';
+                }}
+              >
+                Sign out
+              </button>
             </>
           )}
         </div>

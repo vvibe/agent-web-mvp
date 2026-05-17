@@ -114,9 +114,26 @@ app.use((req, res, next) => {
 const SERVER_URL_PLACEHOLDER = '__VVIBE_SERVER_URL__';
 const publicDir = path.resolve(__dirname, 'public');
 
+// Derive the daemon WS URL from PUBLIC_URL rather than the request's Host
+// header. Host is attacker-controllable in principle (anyone past the edge
+// proxy that sets a weird Host); even if Fly normally normalizes it, the
+// substituted value lands inside a single-quoted shell/PS string, so a quote
+// or newline in Host would break out of the literal. PUBLIC_URL is set from
+// env at boot — it's the one value we already trust to identify us.
+const installScriptWsURL = (() => {
+  try {
+    const u = new URL(PUBLIC_URL);
+    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    u.pathname = '/client';
+    return u.toString();
+  } catch {
+    return `${PUBLIC_URL.replace(/^http/, 'ws')}/client`;
+  }
+})();
+
 function serveInstallScript(filename: string) {
   const filePath = path.join(publicDir, filename);
-  return (req: express.Request, res: express.Response) => {
+  return (_req: express.Request, res: express.Response) => {
     let content: string;
     try {
       content = readFileSync(filePath, 'utf-8');
@@ -124,10 +141,7 @@ function serveInstallScript(filename: string) {
       res.status(404).type('text/plain').send('Not Found');
       return;
     }
-    const proto = req.protocol === 'https' ? 'wss' : 'ws';
-    const host = req.get('host') ?? req.hostname;
-    const wsURL = `${proto}://${host}/client`;
-    content = content.split(SERVER_URL_PLACEHOLDER).join(wsURL);
+    content = content.split(SERVER_URL_PLACEHOLDER).join(installScriptWsURL);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     res.send(content);
@@ -183,8 +197,10 @@ const pairStatusLimiter = rateLimit({
 // GitHub OAuth
 app.get('/auth/github', authLimiter, startOAuthLogin);
 app.get('/auth/github/callback', authLimiter, handleOAuthCallback);
+// POST-only: a GET endpoint is trivially CSRF-able via `<img src="…/logout">`
+// from any third-party page (cookie auth, SameSite=Lax). The frontend now
+// posts via fetch with credentials.
 app.post('/auth/logout', logout);
-app.get('/auth/logout', logout); // browser convenience
 
 // Device pairing
 app.post('/api/device/pair-init', pairInitLimiter, pairInit);
@@ -318,6 +334,11 @@ clientWss.on('connection', (ws, req) => {
     if (deviceId && msg.type === 'daemon_dir_listing') {
       const pending = pendingDirListings.get(msg.requestId);
       if (!pending) return;
+      // Cross-tenant guard: a daemon may only resolve listings that were
+      // initiated by a browser of the same user. Without this, any daemon
+      // could brute-force the 6-char requestId space and inject fake
+      // directory entries into another user's picker.
+      if (pending.userId !== userId) return;
       pendingDirListings.delete(msg.requestId);
       send(pending.ws, {
         type: 'dir_listing',
@@ -380,6 +401,11 @@ function broadcastToUser(userId: string, msg: ServerMessage) {
 const DIR_LISTING_TTL_MS = 5_000;
 interface PendingDirListing {
   ws: WebSocket;
+  // userId of the browser that initiated the listing. We check this
+  // against the daemon's userId when a daemon_dir_listing comes back, so
+  // a malicious user's daemon can't brute-force requestIds and inject
+  // cross-tenant directory entries into someone else's picker.
+  userId: string;
   path: string;
   expiresAt: number;
 }
@@ -574,6 +600,22 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
       s.cancel();
       return;
     }
+    case 'cancel_all': {
+      // Emergency brake: cancel every session of this user that's actively
+      // burning tokens. Cheap to call when nothing is running. Server-side
+      // gate against "I went to lunch and an agent looped" / "I think my
+      // tab was hijacked" scenarios.
+      let cancelled = 0;
+      for (const s of store.listForUser(userId)) {
+        const st = s.meta().status;
+        if (st === 'running' || st === 'awaiting_permission') {
+          s.cancel();
+          cancelled++;
+        }
+      }
+      send(ws, { type: 'cancel_all_ack', cancelled });
+      return;
+    }
     case 'delete_session': {
       const s = store.getForUser(msg.sessionId, userId);
       if (!s) return;
@@ -605,6 +647,7 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
       if (target) {
         pendingDirListings.set(msg.requestId, {
           ws,
+          userId,
           path: msg.path,
           expiresAt: Date.now() + DIR_LISTING_TTL_MS,
         });

@@ -578,7 +578,37 @@ code {
   justify-content: space-between;
   font-size: 12px;
 }
+/* Emergency stop-all button. Sits between the device panel and the footer
+   so it's eye-catching but doesn't take space when nothing's running. */
+.sidebar-stop-all {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+.stop-all-btn {
+  width: 100%;
+  padding: 8px 12px;
+  background: #b00020;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+}
+.stop-all-btn:hover { background: #d00028; }
+.stop-all-btn:active { background: #8c0019; }
+
 .sidebar-footer .user-login { color: var(--text-dim); }
+/* Sign-out went POST-only (CSRF hardening), so it's now a <button>. The
+   link-button reset keeps it visually identical to the old <a>. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  color: inherit;
+}
 .sidebar-footer .logout {
   color: var(--text-dim);
   text-decoration: none;

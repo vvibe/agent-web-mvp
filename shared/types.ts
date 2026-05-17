@@ -64,6 +64,8 @@ export type ClientMessage =
   | { type: 'send_prompt'; sessionId: string; prompt: string }
   | { type: 'permission_response'; sessionId: string; requestId: string; allow: boolean }
   | { type: 'cancel'; sessionId: string }
+  /** Emergency brake — cancel every running/awaiting session this user owns. */
+  | { type: 'cancel_all' }
   | { type: 'delete_session'; sessionId: string }
   | {
       type: 'list_dir';
@@ -88,6 +90,9 @@ export type ServerMessage =
   | { type: 'permission_request'; request: PermissionRequest }
   | { type: 'permission_resolved'; sessionId: string; requestId: string }
   | { type: 'devices'; devices: DeviceInfo[] }
+  /** Acknowledgement for `cancel_all` — how many sessions were actually
+   *  cancelled (zero is a normal "nothing was running" reply, not an error). */
+  | { type: 'cancel_all_ack'; cancelled: number }
   | {
       type: 'dir_listing';
       requestId: string;
