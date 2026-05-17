@@ -21,6 +21,11 @@ set -eu
 REPO="vvibe/agent-web-mvp"
 ASSET_PREFIX="vvibe"
 BINARY="vvibe"
+# Substituted at serve-time by the HTTP server with the WS URL derived from the
+# request that fetched this script (e.g. wss://<host>/client). When you run
+# install.sh from a local copy (not via curl|sh), the placeholder remains and
+# config-seeding is skipped — set the server manually via `vvibe login --server=...`.
+SERVER_URL='__VVIBE_SERVER_URL__'
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -212,6 +217,37 @@ EOF
     fi
   fi
 fi
+
+# ── Seed daemon config with server URL ─────────────────────────────────────
+# When this script was served by the vvibe HTTP server it knows its own
+# externally-reachable URL and substitutes it into SERVER_URL above. We write
+# that into the daemon config so `vvibe login` doesn't need --server. Skipped
+# if (a) the placeholder is still present (running from a local copy), or
+# (b) a config file already exists (don't clobber a working install).
+case "$SERVER_URL" in
+  __VVIBE_SERVER_URL__*|"") ;;
+  *)
+    if [ "$os" = darwin ]; then
+      config_dir="$HOME/Library/Application Support/vvibe"
+    else
+      config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/vvibe"
+    fi
+    config_file="$config_dir/client.json"
+    if [ -f "$config_file" ]; then
+      log "Config already exists at $config_file — keeping existing server URL"
+    else
+      mkdir -p "$config_dir"
+      cat > "$config_file" <<JSON
+{
+  "server": "$SERVER_URL"
+}
+JSON
+      chmod 600 "$config_file"
+      log "Seeded config → $config_file"
+      log "  server: $SERVER_URL"
+    fi
+    ;;
+esac
 
 # ── Agent CLI detection ────────────────────────────────────────────────────
 # The vvibe daemon spawns claude / codex on PATH; missing ones simply won't

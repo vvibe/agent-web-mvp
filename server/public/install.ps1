@@ -18,6 +18,10 @@ $Repo = 'vvibe/agent-web-mvp'
 $AssetPrefix = 'vvibe'
 $Binary = 'vvibe.exe'
 $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\Vvibe'
+# Substituted at serve-time by the HTTP server with the WS URL derived from
+# the request that fetched this script. When you run install.ps1 from a local
+# copy (not via iwr|iex) the placeholder remains and config-seeding is skipped.
+$ServerUrl = '__VVIBE_SERVER_URL__'
 
 function Write-Step { param($msg) Write-Host "==> $msg" -ForegroundColor Cyan }
 function Write-Warn { param($msg) Write-Host "!!  $msg" -ForegroundColor Yellow }
@@ -115,6 +119,24 @@ $ver = try { & $installedExe version } catch { 'unknown' }
 Write-Host ""
 Write-Host "Installed -> $installedExe"
 Write-Host "Version:     $ver"
+
+# ── Seed daemon config with server URL ─────────────────────────────────────
+# When this script was served by the vvibe HTTP server it substitutes its own
+# WS URL into $ServerUrl above. Write it into the daemon config so
+# `vvibe login` doesn't need --server. Skipped if the placeholder is still
+# present or a config file already exists.
+if ($ServerUrl -ne '__VVIBE_SERVER_URL__' -and -not [string]::IsNullOrWhiteSpace($ServerUrl)) {
+  $configDir = Join-Path $env:APPDATA 'vvibe'
+  $configFile = Join-Path $configDir 'client.json'
+  if (Test-Path $configFile) {
+    Write-Step "Config already exists at $configFile — keeping existing server URL"
+  } else {
+    New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    @{ server = $ServerUrl } | ConvertTo-Json -Compress | Set-Content -Path $configFile -Encoding UTF8
+    Write-Step "Seeded config -> $configFile"
+    Write-Host "   server: $ServerUrl"
+  }
+}
 
 # ── Agent CLI detection ────────────────────────────────────────────────────
 # The vvibe daemon spawns claude / codex on PATH; missing ones simply won't

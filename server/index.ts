@@ -4,7 +4,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -104,21 +104,39 @@ app.use((req, res, next) => {
   next();
 });
 
-// Static install scripts (install.sh / install.ps1) live under server/public.
-// Served with text/plain so `curl | sh` and `iwr | iex` get the raw content
-// and proxies / browsers don't try to render or transform them.
+// Install scripts (install.sh / install.ps1) live under server/public. They
+// contain a `__VVIBE_SERVER_URL__` placeholder that we substitute at request
+// time with the WS URL derived from the request itself, so the daemon config
+// is seeded to point at this server (no `--server` flag needed at login).
+// trust proxy is set further down so req.protocol/req.get('host') reflect
+// X-Forwarded-* on Fly. Cache disabled because the substituted body depends
+// on the request host.
+const SERVER_URL_PLACEHOLDER = '__VVIBE_SERVER_URL__';
 const publicDir = path.resolve(__dirname, 'public');
+
+function serveInstallScript(filename: string) {
+  const filePath = path.join(publicDir, filename);
+  return (req: express.Request, res: express.Response) => {
+    let content: string;
+    try {
+      content = readFileSync(filePath, 'utf-8');
+    } catch {
+      res.status(404).type('text/plain').send('Not Found');
+      return;
+    }
+    const proto = req.protocol === 'https' ? 'wss' : 'ws';
+    const host = req.get('host') ?? req.hostname;
+    const wsURL = `${proto}://${host}/client`;
+    content = content.split(SERVER_URL_PLACEHOLDER).join(wsURL);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(content);
+  };
+}
+
 if (existsSync(publicDir)) {
-  app.use(
-    express.static(publicDir, {
-      setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.sh') || filePath.endsWith('.ps1')) {
-          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          res.setHeader('Cache-Control', 'public, max-age=300');
-        }
-      },
-    }),
-  );
+  app.get('/install.sh', serveInstallScript('install.sh'));
+  app.get('/install.ps1', serveInstallScript('install.ps1'));
 }
 
 const distWeb = path.resolve(__dirname, '..', 'dist', 'web');
