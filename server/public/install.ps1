@@ -85,7 +85,12 @@ try {
   if (-not ($userPath -split ';' | Where-Object { $_ -ieq $InstallDir })) {
     Write-Step "Adding $InstallDir to user PATH"
     [Environment]::SetEnvironmentVariable('Path', "$userPath;$InstallDir", 'User')
-    Write-Warn "Open a new PowerShell window so the updated PATH takes effect."
+  }
+  # Update the *current* session's PATH too so `vvibe` works immediately,
+  # without forcing a new shell. New windows pick up the User-scoped value
+  # set above.
+  if (-not ($env:Path -split ';' | Where-Object { $_ -ieq $InstallDir })) {
+    $env:Path = "$env:Path;$InstallDir"
   }
 } finally {
   Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue

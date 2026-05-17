@@ -52,12 +52,13 @@ checksums_url="https://github.com/${REPO}/releases/latest/download/checksums.txt
 # Prefer /usr/local/bin so the daemon is on PATH for `vvibe` invocations from
 # any shell. Fall back to ~/.local/bin if we can't write there.
 install_dir=/usr/local/bin
+needs_path=0
 if ! { [ -w "$install_dir" ] || ([ ! -e "$install_dir" ] && [ -w "$(dirname "$install_dir")" ]); }; then
   install_dir="$HOME/.local/bin"
   mkdir -p "$install_dir"
   case ":$PATH:" in
     *":$install_dir:"*) ;;
-    *) warn "$install_dir is not on your PATH — add it to your shell profile after install" ;;
+    *) needs_path=1 ;;
   esac
 fi
 
@@ -112,6 +113,80 @@ cat <<EOF
 Installed → $install_dir/$BINARY
 Version:    $("$install_dir/$BINARY" version 2>/dev/null || echo unknown)
 EOF
+
+# ── Update shell PATH (when installed to ~/.local/bin and not on PATH) ─────
+# Mirrors what bun / deno / rustup do: append an export to the user's shell
+# rc file with a clear marker so it can be removed by deleting that block.
+# Skip with VVIBE_NO_MODIFY_PATH=1 for users who manage PATH themselves.
+path_modified_file=""
+if [ "$needs_path" = 1 ]; then
+  if [ "${VVIBE_NO_MODIFY_PATH:-0}" = 1 ]; then
+    cat <<EOF
+
+PATH not updated (VVIBE_NO_MODIFY_PATH=1). Add this line to your shell rc:
+   export PATH="$install_dir:\$PATH"
+EOF
+  else
+    shell_name="$(basename "${SHELL:-}")"
+    rc=""
+    line=""
+    case "$shell_name" in
+      zsh)
+        rc="$HOME/.zshrc"
+        line='export PATH="$HOME/.local/bin:$PATH"'
+        ;;
+      bash)
+        # macOS Terminal launches bash as a *login* shell which reads
+        # .bash_profile (not .bashrc); Linux interactive shells read .bashrc.
+        if [ "$os" = darwin ]; then
+          if [ -f "$HOME/.bash_profile" ]; then rc="$HOME/.bash_profile"
+          elif [ -f "$HOME/.bashrc" ];      then rc="$HOME/.bashrc"
+          else rc="$HOME/.bash_profile"
+          fi
+        else
+          rc="$HOME/.bashrc"
+        fi
+        line='export PATH="$HOME/.local/bin:$PATH"'
+        ;;
+      fish)
+        rc="$HOME/.config/fish/config.fish"
+        mkdir -p "$(dirname "$rc")"
+        line='fish_add_path -aU $HOME/.local/bin'
+        ;;
+    esac
+
+    if [ -n "$rc" ]; then
+      touch "$rc"
+      if grep -Fq "# vvibe (added by installer)" "$rc" 2>/dev/null; then
+        path_modified_file="$rc"  # marker already present from a prior run
+      else
+        {
+          printf '\n# vvibe (added by installer) — remove this block to undo\n'
+          printf '%s\n' "$line"
+        } >> "$rc"
+        path_modified_file="$rc"
+      fi
+    fi
+
+    if [ -n "$path_modified_file" ]; then
+      cat <<EOF
+
+PATH updated → added $install_dir to $path_modified_file
+   To use vvibe in this shell right now, run:
+       source $path_modified_file
+   (Or just open a new terminal window.)
+   To opt out next time, re-run with VVIBE_NO_MODIFY_PATH=1.
+EOF
+    else
+      cat <<EOF
+
+$install_dir is not on your PATH and shell '$shell_name' is unrecognized.
+Add this line to your shell rc file manually:
+   export PATH="$install_dir:\$PATH"
+EOF
+    fi
+  fi
+fi
 
 # ── Agent CLI detection ────────────────────────────────────────────────────
 # The vvibe daemon spawns claude / codex on PATH; missing ones simply won't
