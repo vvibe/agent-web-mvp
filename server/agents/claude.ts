@@ -14,6 +14,8 @@ export class ClaudeRunner implements AgentRunner {
   constructor(
     private readonly cwd: string,
     private readonly events: AgentEvents,
+    /** Claude model id; undefined = SDK default. */
+    private readonly model?: string,
   ) {}
 
   async send(prompt: string, resumeToken: string | undefined): Promise<void> {
@@ -39,6 +41,10 @@ export class ClaudeRunner implements AgentRunner {
           cwd: this.cwd,
           resume: resumeToken,
           abortController: this.aborter,
+          // Mirror the daemon bridge: 25-turn cap and explicit model so the
+          // local anon-dev path matches production behavior.
+          maxTurns: 25,
+          ...(this.model ? { model: this.model } : {}),
           canUseTool: async (toolName: string, input: unknown) => {
             const allowed = await this.events.onPermissionRequest({ toolName, input });
             return allowed

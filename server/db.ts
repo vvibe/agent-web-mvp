@@ -75,6 +75,7 @@ db.exec(`
     title                 TEXT NOT NULL,
     resume_token          TEXT,
     preferred_device_id   TEXT,
+    model                 TEXT,
     created_at            INTEGER NOT NULL
   );
 
@@ -99,13 +100,16 @@ db.prepare(`
   ON CONFLICT(id) DO NOTHING
 `).run(Date.now());
 
-// Additive migration: agent_sessions.preferred_device_id (added when the web
-// UI got a device picker). CREATE TABLE IF NOT EXISTS won't touch an existing
-// table, so add the column when missing.
+// Additive migrations on agent_sessions. CREATE TABLE IF NOT EXISTS won't
+// touch an existing table, so columns added after first deploy need an
+// explicit ALTER when missing.
 {
   const cols = db.prepare(`PRAGMA table_info(agent_sessions)`).all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === 'preferred_device_id')) {
     db.exec(`ALTER TABLE agent_sessions ADD COLUMN preferred_device_id TEXT`);
+  }
+  if (!cols.some((c) => c.name === 'model')) {
+    db.exec(`ALTER TABLE agent_sessions ADD COLUMN model TEXT`);
   }
 }
 
@@ -157,6 +161,7 @@ export interface AgentSessionRow {
   title: string;
   resume_token: string | null;
   preferred_device_id: string | null;
+  model: string | null;
   created_at: number;
 }
 
@@ -255,9 +260,9 @@ export const stmts = {
   `),
 
   // Agent sessions ─────────────────────────────────────────────────────────
-  insertAgentSession: db.prepare<[string, string, string, string, string, string | null, number]>(`
-    INSERT INTO agent_sessions (id, user_id, agent, cwd, title, preferred_device_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+  insertAgentSession: db.prepare<[string, string, string, string, string, string | null, string | null, number]>(`
+    INSERT INTO agent_sessions (id, user_id, agent, cwd, title, preferred_device_id, model, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `),
   updateAgentSessionPreferredDevice: db.prepare<[string | null, string]>(`
     UPDATE agent_sessions SET preferred_device_id = ? WHERE id = ?

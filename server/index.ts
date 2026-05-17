@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ClientMessage, DaemonClientMessage, DeviceInfo, ServerMessage } from '../shared/types.ts';
+import { isAllowedClaudeModel } from '../shared/types.ts';
 import { SessionStore, makeRunnerFactory, type Session } from './sessions.ts';
 import { DeviceRegistry, type DeviceHello } from './devices.ts';
 import { stmts } from './db.ts';
@@ -578,6 +579,10 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
         cwd: msg.cwd,
         title: msg.title,
         preferredDeviceId,
+        // Whitelisted to current Claude family — anything outside this set is
+        // dropped to undefined (= SDK default). Stops a malicious client from
+        // passing arbitrary strings into the SDK's model option.
+        model: msg.agent === 'claude' && isAllowedClaudeModel(msg.model) ? msg.model : undefined,
       });
       send(ws, { type: 'session_created', session: s.meta() });
       return;

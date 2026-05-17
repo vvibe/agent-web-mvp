@@ -251,8 +251,8 @@ function MainApp({ me }: { me: Me }) {
           devices={devices}
           ws={wsRef.current}
           onCancel={() => setShowNew(false)}
-          onCreate={(agent, cwd, title, deviceId) => {
-            wsRef.current?.send({ type: 'create_session', agent, cwd, title, deviceId });
+          onCreate={(agent, cwd, title, deviceId, model) => {
+            wsRef.current?.send({ type: 'create_session', agent, cwd, title, deviceId, model });
             setShowNew(false);
           }}
         />

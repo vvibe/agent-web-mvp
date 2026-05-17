@@ -227,6 +227,7 @@ func handleRunPrompt(s *wsSender, msg map[string]any) {
 	cwd, _ := msg["cwd"].(string)
 	prompt, _ := msg["prompt"].(string)
 	resume, _ := msg["resumeToken"].(string)
+	model, _ := msg["model"].(string)
 	if runId == "" {
 		return
 	}
@@ -271,7 +272,7 @@ func handleRunPrompt(s *wsSender, msg map[string]any) {
 		defer runs.finish(runId)
 		defer cancel()
 
-		newResume, runErr := runner.Run(ctx, prompt, cwd, resume, emit, askPermission)
+		newResume, runErr := runner.Run(ctx, prompt, cwd, resume, model, emit, askPermission)
 
 		done := map[string]any{
 			"type":  "daemon_done",

@@ -72,11 +72,32 @@ export function ChatPane({ session, messages, onSend, onCancel }: Props) {
   );
 }
 
+// Strip ANSI escape sequences from tool output. CLIs like `npx skills` print
+// color / cursor / spinner codes meant for a real terminal; here they leak
+// as visible `[34m...[39m` garbage because the leading ESC char is dropped
+// by HTML rendering. Cheap fix: drop the whole sequence on display. Doesn't
+// modify the stored text, so a future ansi-to-html renderer can replace
+// this transform without losing data.
+//
+// \x1b? handles two cases: the proper ESC-prefixed sequence as emitted by
+// CLIs, AND the ESC-stripped form that sometimes reaches us via transport
+// layers (just `[34m...` etc.).
+const ANSI_PATTERN = /\x1b?\[[0-9;?]*[A-Za-z]/g;
+function stripAnsi(s: string): string {
+  return s.replace(ANSI_PATTERN, '');
+}
+
 function MessageBubble({ message }: { message: ChatMessage }) {
+  // Only strip on tool output; user/assistant prose shouldn't contain ANSI,
+  // and stripping there would be a waste of regex work on every render.
+  const text =
+    message.role === 'tool_result' || message.role === 'tool_use'
+      ? stripAnsi(message.text)
+      : message.text;
   return (
     <div className={`bubble role-${message.role}`}>
       <div className="bubble-role">{message.role}</div>
-      <div className="bubble-text">{message.text}</div>
+      <div className="bubble-text">{text}</div>
     </div>
   );
 }

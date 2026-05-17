@@ -58,7 +58,7 @@ func (r *claudeRunner) Permission(requestID string, allow bool) {
 }
 
 func (r *claudeRunner) Run(
-	ctx context.Context, prompt string, cwd string, resumeToken string,
+	ctx context.Context, prompt string, cwd string, resumeToken string, model string,
 	emit func(role, text string, meta map[string]any),
 	askPermission func(requestID, toolName string, input any),
 ) (string, error) {
@@ -93,13 +93,18 @@ func (r *claudeRunner) Run(
 	r.stdin = stdinPipe
 	r.writeMu.Unlock()
 
-	// Send the initial prompt.
-	if err := writeJSONLine(stdinPipe, map[string]any{
+	// Send the initial prompt. Empty `model` means "let the SDK choose" so
+	// we omit it rather than passing the empty string through.
+	payload := map[string]any{
 		"type":   "prompt",
 		"prompt": prompt,
 		"cwd":    cwd,
 		"resume": resumeToken,
-	}); err != nil {
+	}
+	if model != "" {
+		payload["model"] = model
+	}
+	if err := writeJSONLine(stdinPipe, payload); err != nil {
 		_ = cmd.Process.Kill()
 		return "", err
 	}

@@ -27,6 +27,9 @@ export class RemoteRunner implements AgentRunner {
      *  the first connected daemon otherwise — pinning a session to a device
      *  shouldn't orphan it if the user happens to be on a different machine. */
     private readonly preferredDeviceId?: string,
+    /** Claude model id (e.g. 'claude-sonnet-4-6'); undefined = SDK default.
+     *  Daemon ignores for Codex. Passed through on every daemon_run_prompt. */
+    private readonly model?: string,
   ) {}
 
   async send(prompt: string, resumeToken: string | undefined): Promise<void> {
@@ -59,6 +62,7 @@ export class RemoteRunner implements AgentRunner {
       cwd: this.cwd,
       prompt,
       resumeToken,
+      model: this.model,
     });
 
     if (!ok) {

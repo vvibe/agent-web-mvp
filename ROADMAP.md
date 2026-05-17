@@ -152,6 +152,29 @@ ratio. Rest deferred to **Milestone 10**.
   `<img src=".../logout">` CSRF nuisance from third-party pages.
   Frontend now POSTs via `fetch` and navigates to `/`.
 
+### M4.7 follow-up — Model picker + ANSI strip
+
+Two small UX gaps that showed up immediately after M4.7 shipped:
+
+- **Model selection** end-to-end. `NewSessionDialog` gains a "Model" dropdown
+  (only when agent = Claude) listing the current Claude family — Opus 4.7 /
+  Sonnet 4.6 / Haiku 4.5 — with "Default" as the no-pick option (lets the
+  SDK pick, currently Opus). Picked model flows through `create_session` →
+  `Session` (persisted in `agent_sessions.model`) → `RemoteRunner` →
+  `daemon_run_prompt` → bridge → SDK `options.model`. Server-side allowlist
+  via `isAllowedClaudeModel` in `shared/types.ts` rejects anything outside
+  the dropdown, so a malicious client can't pass arbitrary strings to the
+  SDK. Local `ClaudeRunner` (anon dev path) honors the same field, plus
+  picks up the `maxTurns: 25` cap so dev mirrors prod.
+- **Strip ANSI on tool output.** CLI tools like `npx skills` emit color +
+  cursor + spinner escape sequences (`\x1b[34m`, `\x1b[?25l`, `\x1b[999D[J`).
+  The leading ESC gets dropped by HTML rendering, leaving `[34m...[39m`
+  garbage in the chat log. `ChatPane.MessageBubble` now runs a regex
+  strip on `tool_use` / `tool_result` roles only (user/assistant prose
+  shouldn't contain ANSI; skipping them saves regex work per render).
+  The stored text is unchanged so a future ansi-to-html renderer can
+  drop in.
+
 ### M4.8 — One-line daemon installer + CLI rename to `vvibe`
 
 GoReleaser config (`client-go/.goreleaser.yaml`) builds the daemon for

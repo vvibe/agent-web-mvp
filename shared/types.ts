@@ -1,5 +1,20 @@
 export type AgentKind = 'claude' | 'codex';
 
+/** Claude model ids the UI offers and the server accepts. Anything outside
+ *  this list is rejected back to "SDK default" (currently Opus 4.7 under the
+ *  claude_code preset). Kept here so the dropdown, server validation, and
+ *  daemon all share one source of truth. */
+export const CLAUDE_MODELS = [
+  { id: 'claude-opus-4-7', label: 'Opus 4.7 — most capable, slowest' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — balanced' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — fast, cheap' },
+] as const;
+export type ClaudeModelId = (typeof CLAUDE_MODELS)[number]['id'];
+
+export function isAllowedClaudeModel(m: unknown): m is ClaudeModelId {
+  return typeof m === 'string' && CLAUDE_MODELS.some((cm) => cm.id === m);
+}
+
 export type SessionStatus = 'idle' | 'running' | 'awaiting_permission' | 'error' | 'ended';
 
 export interface SessionMeta {
@@ -12,6 +27,8 @@ export interface SessionMeta {
   /** Device this session is pinned to; runner falls back to any connected
    *  daemon if it's offline. Undefined = no pin (first-connected wins). */
   preferredDeviceId?: string;
+  /** Claude model id (e.g. 'claude-sonnet-4-6'). Undefined = SDK default. */
+  model?: string;
 }
 
 export interface ChatMessage {
@@ -60,6 +77,8 @@ export type ClientMessage =
       /** Pin this session to a specific daemon. Falls back to first connected
        *  if the chosen device is offline at send time. */
       deviceId?: string;
+      /** Claude model id; ignored for Codex. Undefined = SDK default. */
+      model?: string;
     }
   | { type: 'send_prompt'; sessionId: string; prompt: string }
   | { type: 'permission_response'; sessionId: string; requestId: string; allow: boolean }
@@ -121,6 +140,8 @@ export type DaemonServerMessage =
       cwd: string;
       prompt: string;
       resumeToken?: string;
+      /** Claude model id (e.g. 'claude-sonnet-4-6'); daemon ignores for Codex. */
+      model?: string;
     }
   | { type: 'daemon_cancel'; runId: string }
   | {

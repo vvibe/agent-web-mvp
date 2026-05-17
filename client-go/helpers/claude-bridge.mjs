@@ -114,6 +114,10 @@ async function runTurn(req) {
         // and against runaway agent loops chewing through tokens. 25 is
         // plenty for normal coding tasks — most prompts resolve in <10.
         maxTurns: 25,
+        // Model is server-validated against an allowlist (see CLAUDE_MODELS
+        // in shared/types.ts) before reaching us; we just forward it.
+        // Omitted entirely when empty so the SDK picks its default.
+        ...(req.model ? { model: req.model } : {}),
         canUseTool: (toolName, input) => askPermission(toolName, input),
         // Use Claude Code's full default system prompt so the model is told
         // its working directory, git status, etc. Without this, Claude has

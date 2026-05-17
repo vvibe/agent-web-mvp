@@ -23,7 +23,7 @@ func (r *codexRunner) Permission(string, bool) {
 }
 
 func (r *codexRunner) Run(
-	ctx context.Context, prompt string, cwd string, _ string,
+	ctx context.Context, prompt string, cwd string, _ string, _ string,
 	emit func(role, text string, meta map[string]any),
 	_ func(requestID, toolName string, input any),
 ) (string, error) {

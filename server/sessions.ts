@@ -20,6 +20,7 @@ export type RunnerFactory = (
   cwd: string,
   events: AgentEvents,
   preferredDeviceId: string | undefined,
+  model: string | undefined,
 ) => AgentRunner;
 
 /**
@@ -32,11 +33,11 @@ export type RunnerFactory = (
  *     runners so `npm run dev` keeps working single-user.
  */
 export function makeRunnerFactory(devices: DeviceRegistry): RunnerFactory {
-  return (userId, agent, cwd, events, preferredDeviceId) => {
+  return (userId, agent, cwd, events, preferredDeviceId, model) => {
     if (userId === 'anon') {
-      return agent === 'claude' ? new ClaudeRunner(cwd, events) : new CodexRunner(cwd, events);
+      return agent === 'claude' ? new ClaudeRunner(cwd, events, model) : new CodexRunner(cwd, events);
     }
-    return new RemoteRunner(userId, agent, cwd, devices, events, preferredDeviceId);
+    return new RemoteRunner(userId, agent, cwd, devices, events, preferredDeviceId, model);
   };
 }
 
@@ -66,6 +67,9 @@ export class Session {
   /** Device the session is pinned to (RemoteRunner falls back to first
    *  connected if it's offline). Undefined = no pin. */
   preferredDeviceId: string | undefined;
+  /** Claude model id (e.g. 'claude-sonnet-4-6'); undefined = SDK default
+   *  (currently Opus 4.7 under the claude_code preset). Ignored for Codex. */
+  model: string | undefined;
 
   private runner: AgentRunner;
   private pending = new Map<string, PendingPermission>();
@@ -85,6 +89,7 @@ export class Session {
       createdAt?: number;
       resumeToken?: string;
       preferredDeviceId?: string;
+      model?: string;
       history?: ChatMessage[];
     },
     private events: SessionEvents,
@@ -98,6 +103,7 @@ export class Session {
     this.createdAt = opts.createdAt ?? Date.now();
     this.resumeToken = opts.resumeToken;
     this.preferredDeviceId = opts.preferredDeviceId;
+    this.model = opts.model;
     if (opts.history) this.history = opts.history;
 
     const agentEvents: AgentEvents = {
@@ -126,7 +132,7 @@ export class Session {
       },
     };
 
-    this.runner = makeRunner(opts.userId, opts.agent, this.cwd, agentEvents, this.preferredDeviceId);
+    this.runner = makeRunner(opts.userId, opts.agent, this.cwd, agentEvents, this.preferredDeviceId, this.model);
   }
 
   meta(): SessionMeta {
@@ -138,6 +144,7 @@ export class Session {
       status: this.status,
       createdAt: this.createdAt,
       preferredDeviceId: this.preferredDeviceId,
+      model: this.model,
     };
   }
 
@@ -260,6 +267,7 @@ export class SessionStore {
     cwd: string;
     title?: string;
     preferredDeviceId?: string;
+    model?: string;
   }): Session {
     const s = new Session(opts, this.events, this.makeRunner);
     // Persist BEFORE the in-memory commit so a FK violation or any other DB
@@ -271,6 +279,7 @@ export class SessionStore {
       s.cwd,
       s.title,
       s.preferredDeviceId ?? null,
+      s.model ?? null,
       s.createdAt,
     );
     this.sessions.set(s.id, s);
@@ -316,6 +325,7 @@ export class SessionStore {
           createdAt: row.created_at,
           resumeToken: row.resume_token ?? undefined,
           preferredDeviceId: row.preferred_device_id ?? undefined,
+          model: row.model ?? undefined,
           history,
         },
         this.events,

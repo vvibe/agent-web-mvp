@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AgentKind, DeviceInfo } from '../../../shared/types';
+import { CLAUDE_MODELS } from '../../../shared/types';
 import type { WSClient } from '../ws';
 import { DirectoryPicker } from './DirectoryPicker';
 
@@ -8,11 +9,19 @@ interface Props {
   devices: DeviceInfo[];
   ws: WSClient;
   onCancel: () => void;
-  onCreate: (agent: AgentKind, cwd: string, title?: string, deviceId?: string) => void;
+  onCreate: (
+    agent: AgentKind,
+    cwd: string,
+    title?: string,
+    deviceId?: string,
+    model?: string,
+  ) => void;
 }
 
 export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }: Props) {
   const [agent, setAgent] = useState<AgentKind>('claude');
+  // Empty string = "let the SDK pick" (currently Opus 4.7 under claude_code preset).
+  const [model, setModel] = useState<string>('');
   // When daemons are paired, the cwd lives on the daemon's filesystem —
   // server's defaultCwd (e.g. '/app' in the Fly container) is meaningless
   // there and pre-filling it leads to a confusing "no such file or
@@ -50,7 +59,9 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
   function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!cwd.trim()) return;
-    onCreate(agent, cwd.trim(), title.trim() || undefined, deviceId || undefined);
+    // Model only meaningful for Claude; Codex CLI doesn't take one yet.
+    const sendModel = agent === 'claude' && model ? model : undefined;
+    onCreate(agent, cwd.trim(), title.trim() || undefined, deviceId || undefined, sendModel);
   }
 
   const selectedDevice = deviceId ? devices.find((d) => d.id === deviceId) : undefined;
@@ -87,6 +98,17 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
               </option>
             </select>
           </label>
+          {agent === 'claude' && (
+            <label>
+              Model
+              <select value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">Default (SDK picks — currently Opus 4.7)</option>
+                {CLAUDE_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
           {devices.length > 1 && (
             <label>
               Device

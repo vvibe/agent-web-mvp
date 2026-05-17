@@ -14,7 +14,9 @@ import (
 // askPermission. Permission responses arrive out-of-band via Permission(); the
 // implementation correlates by requestID.
 type Runner interface {
-	Run(ctx context.Context, prompt string, cwd string, resumeToken string,
+	// model is empty string when the server didn't pin one — the runner falls
+	// back to its default. Codex ignores model (CLI doesn't accept it yet).
+	Run(ctx context.Context, prompt string, cwd string, resumeToken string, model string,
 		emit func(role, text string, meta map[string]any),
 		askPermission func(requestID, toolName string, input any),
 	) (newResumeToken string, err error)
