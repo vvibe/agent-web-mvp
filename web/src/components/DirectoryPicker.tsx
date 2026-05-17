@@ -24,12 +24,24 @@ export function DirectoryPicker({ ws, initialPath, deviceId, devices, onPick, on
   const requestIdRef = useRef<string>('');
   // Track requestId for the in-flight call so we ignore stale responses if the
   // user clicks through directories faster than the daemon round-trips.
+  const triedHomeFallbackRef = useRef(false);
 
   useEffect(() => {
     requestIdRef.current = '';
+    triedHomeFallbackRef.current = false;
     const off = ws.on((msg: ServerMessage) => {
       if (msg.type !== 'dir_listing') return;
       if (msg.requestId !== requestIdRef.current) return;
+      // Initial-fetch fallback: if the requested path doesn't exist on the
+      // daemon (e.g. cwd field was pre-filled with a path that's valid on
+      // the server but not on the daemon's machine), silently retry with
+      // empty path so the daemon resolves it to the user's home dir. Only
+      // attempted once, otherwise a genuinely broken home would loop.
+      if (msg.error && !triedHomeFallbackRef.current && msg.path !== '') {
+        triedHomeFallbackRef.current = true;
+        fetchDir('');
+        return;
+      }
       setLoading(false);
       setListing({
         path: msg.path,

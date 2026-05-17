@@ -13,7 +13,13 @@ interface Props {
 
 export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }: Props) {
   const [agent, setAgent] = useState<AgentKind>('claude');
-  const [cwd, setCwd] = useState(defaultCwd);
+  // When daemons are paired, the cwd lives on the daemon's filesystem —
+  // server's defaultCwd (e.g. '/app' in the Fly container) is meaningless
+  // there and pre-filling it leads to a confusing "no such file or
+  // directory" when the user opens the directory browser. Start empty in
+  // that mode; in anon/local-only mode the server's cwd is the user's
+  // working tree, so pre-filling it is useful.
+  const [cwd, setCwd] = useState(() => (devices.length > 0 ? '' : defaultCwd));
   const [title, setTitle] = useState('');
   // Empty string means "no preference" — server runs on first connected daemon.
   const [deviceId, setDeviceId] = useState<string>('');
