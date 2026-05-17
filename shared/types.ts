@@ -24,9 +24,17 @@ export interface SessionMeta {
   title: string;
   status: SessionStatus;
   createdAt: number;
-  /** Device this session is pinned to; runner falls back to any connected
-   *  daemon if it's offline. Undefined = no pin (first-connected wins). */
+  /** Stable device-token id this session is pinned to. Runner is strict:
+   *  if the device is offline at send() time, the run errors out rather
+   *  than re-routing to another daemon (machine-specific cwds make
+   *  cross-device fallback unsafe). Undefined = no pin (first connected
+   *  daemon wins, which is fine in the common single-daemon case). */
   preferredDeviceId?: string;
+  /** Display name of the pinned device (hostname or user-chosen alias),
+   *  resolved server-side so the UI can render it even while the daemon
+   *  is offline. Undefined when there's no pin OR the pin references a
+   *  token id we no longer have on file (legacy sessions). */
+  preferredDeviceLabel?: string;
   /** Claude model id (e.g. 'claude-sonnet-4-6'). Undefined = SDK default. */
   model?: string;
 }

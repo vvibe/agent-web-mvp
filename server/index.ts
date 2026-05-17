@@ -259,22 +259,28 @@ httpServer.on('upgrade', (req, socket, head) => {
     // Dev-mode fallback: if auth isn't configured, accept any (or no) token
     // and bind to the anonymous user.
     let userId: string | undefined;
+    let deviceTokenId: string | undefined;
     if (!isAuthEnabled()) {
       userId = 'anon';
+      // Anon dev mode has no token; use a fixed synthetic id so the registry
+      // entry is still stable across reconnects.
+      deviceTokenId = 'anon-default';
     } else if (token) {
       const row = verifyDeviceToken(token);
       if (row) {
         stmts.touchDeviceToken.run(Date.now(), row.id);
         userId = row.user_id;
+        deviceTokenId = row.id;
       }
     }
-    if (!userId) {
+    if (!userId || !deviceTokenId) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
     clientWss.handleUpgrade(req, socket, head, (ws) => {
       (ws as any)._userId = userId;
+      (ws as any)._deviceTokenId = deviceTokenId;
       clientWss.emit('connection', ws, req);
     });
   } else {
@@ -289,6 +295,7 @@ const devices = new DeviceRegistry();
 clientWss.on('connection', (ws, req) => {
   const remoteAddr = req.socket.remoteAddress ?? 'unknown';
   const userId = (ws as any)._userId as string;
+  const deviceTokenId = (ws as any)._deviceTokenId as string;
   let deviceId: string | undefined;
   let helloReceived = false;
 
@@ -312,7 +319,7 @@ clientWss.on('connection', (ws, req) => {
       helloReceived = true;
       clearTimeout(helloTimer);
       const hello = msg as DeviceHello & { type: string };
-      const device = devices.register(ws, userId, hello, remoteAddr);
+      const device = devices.register(deviceTokenId, ws, userId, hello, remoteAddr);
       deviceId = device.id;
       console.log(
         `[client] device registered: ${hello.displayName ?? hello.hostname} (${hello.os}/${hello.arch}) — agents=${
@@ -355,7 +362,9 @@ clientWss.on('connection', (ws, req) => {
   ws.on('close', () => {
     clearTimeout(helloTimer);
     if (deviceId) {
-      devices.unregister(deviceId);
+      // Pass ws so we don't accidentally drop a newer connection that
+      // replaced us in register() (see DeviceRegistry.unregister).
+      devices.unregister(deviceId, ws);
       console.log(`[client] device disconnected: ${deviceId}`);
       broadcastDevices(userId);
     } else {
@@ -449,6 +458,26 @@ async function listLocalDir(rawPath: string): Promise<{
   }
 }
 
+/**
+ * Resolve a pinned-device label for the UI. Prefer the live displayName from
+ * the registry (most up-to-date — user may have renamed) and fall back to the
+ * device_tokens.display_name for offline devices. Returns undefined for
+ * unknown ids so the UI can render "pinned (unknown)" or similar.
+ */
+function pinnedDeviceLabel(deviceId: string | undefined): string | undefined {
+  if (!deviceId) return undefined;
+  const live = devices.get(deviceId);
+  if (live) return live.displayName ?? live.hostname;
+  const row = stmts.findDeviceLabelById.get(deviceId);
+  return row?.display_name ?? undefined;
+}
+
+function metaWithDevice(s: { meta(): import('../shared/types.ts').SessionMeta }) {
+  const m = s.meta();
+  m.preferredDeviceLabel = pinnedDeviceLabel(m.preferredDeviceId);
+  return m;
+}
+
 function deviceInfo(userId: string): DeviceInfo[] {
   return devices.listForUser(userId).map((d) => ({
     id: d.id,
@@ -468,7 +497,7 @@ function broadcastDevices(userId: string) {
 
 const store = new SessionStore(
   {
-    onMeta: (s) => broadcastToUser(s.userId, { type: 'session_updated', session: s.meta() }),
+    onMeta: (s) => broadcastToUser(s.userId, { type: 'session_updated', session: metaWithDevice(s) }),
     onMessage: (m) => {
       // Locate session to find the user it belongs to.
       const s = store.get(m.sessionId);
@@ -511,7 +540,7 @@ browserWss.on('connection', (ws) => {
   send(ws, { type: 'hello', defaultCwd: DEFAULT_CWD });
   send(ws, { type: 'devices', devices: deviceInfo(userId) });
   const userSessions = store.listForUser(userId);
-  send(ws, { type: 'sessions', sessions: userSessions.map((s) => s.meta()) });
+  send(ws, { type: 'sessions', sessions: userSessions.map((s) => metaWithDevice(s)) });
   for (const s of userSessions) {
     for (const m of s.history) send(ws, { type: 'message', message: m });
   }
@@ -535,7 +564,7 @@ browserWss.on('connection', (ws) => {
 async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMessage) {
   switch (msg.type) {
     case 'list_sessions':
-      send(ws, { type: 'sessions', sessions: store.listForUser(userId).map((s) => s.meta()) });
+      send(ws, { type: 'sessions', sessions: store.listForUser(userId).map((s) => metaWithDevice(s)) });
       return;
     case 'create_session': {
       // Codex has no in-UI permission flow yet (M5 P1 will add it). Until then
@@ -584,7 +613,7 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
         // passing arbitrary strings into the SDK's model option.
         model: msg.agent === 'claude' && isAllowedClaudeModel(msg.model) ? msg.model : undefined,
       });
-      send(ws, { type: 'session_created', session: s.meta() });
+      send(ws, { type: 'session_created', session: metaWithDevice(s) });
       return;
     }
     case 'send_prompt': {

@@ -255,6 +255,9 @@ export const stmts = {
   findDeviceTokenById: db.prepare<[string], DeviceTokenRow>(`
     SELECT * FROM device_tokens WHERE id = ?
   `),
+  findDeviceLabelById: db.prepare<[string], { display_name: string | null }>(`
+    SELECT display_name FROM device_tokens WHERE id = ?
+  `),
   touchDeviceToken: db.prepare<[number, string]>(`
     UPDATE device_tokens SET last_seen_at = ? WHERE id = ?
   `),

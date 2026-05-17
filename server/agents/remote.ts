@@ -23,9 +23,11 @@ export class RemoteRunner implements AgentRunner {
     private readonly cwd: string,
     private readonly registry: DeviceRegistry,
     private readonly events: AgentEvents,
-    /** When set, RemoteRunner prefers this device if connected. Falls back to
-     *  the first connected daemon otherwise — pinning a session to a device
-     *  shouldn't orphan it if the user happens to be on a different machine. */
+    /** When set, RemoteRunner is *strictly* pinned to this device. If the
+     *  pinned daemon is offline, send() reports an error rather than falling
+     *  back — cwd is machine-specific (a Windows path won't run on Mac), so
+     *  cross-device routing produced silent "no such file or directory" bugs
+     *  whenever a user opened the UI from a different machine. */
     private readonly preferredDeviceId?: string,
     /** Claude model id (e.g. 'claude-sonnet-4-6'); undefined = SDK default.
      *  Daemon ignores for Codex. Passed through on every daemon_run_prompt. */
@@ -35,7 +37,10 @@ export class RemoteRunner implements AgentRunner {
   async send(prompt: string, resumeToken: string | undefined): Promise<void> {
     const device = this.pickDevice();
     if (!device) {
-      this.events.onError(new Error('No daemon connected. Run `vvibe login` and `vvibe install` on your machine.'));
+      const msg = this.preferredDeviceId
+        ? 'The device this session is pinned to is offline. Start the daemon on that machine and retry, or create a new session here.'
+        : 'No daemon connected. Run `vvibe login` and `vvibe install` on your machine.';
+      this.events.onError(new Error(msg));
       this.events.onDone();
       return;
     }
@@ -85,9 +90,16 @@ export class RemoteRunner implements AgentRunner {
 
   private pickDevice() {
     if (this.preferredDeviceId) {
+      // Strict pin: if the preferred device isn't connected right now, return
+      // undefined so send() emits a clear "pinned device offline" error.
+      // Falling back to any other daemon would route a machine-specific cwd
+      // to the wrong filesystem.
       const preferred = this.registry.get(this.preferredDeviceId);
       if (preferred && preferred.userId === this.userId) return preferred;
+      return undefined;
     }
+    // No pin: legacy single-daemon path. First connected wins — fine when
+    // the user only has one daemon, which is the common case.
     return this.registry.pickRunner(this.userId);
   }
 

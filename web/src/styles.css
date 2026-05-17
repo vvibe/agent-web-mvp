@@ -140,6 +140,24 @@ button, input, select, textarea {
 .status-error { color: var(--red); }
 .status-idle { color: var(--text-dim); }
 
+.device-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  margin-left: auto;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.device-pill.device-off { color: var(--red); }
+.device-pill .dot { width: 6px; height: 6px; }
+
 .hint { color: var(--text-dim); padding: 16px; font-size: 13px; }
 
 /* ─── Main / Chat ─────────────────────────────────────────────── */

@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { DaemonClientMessage, DaemonServerMessage } from '../shared/types.ts';
 
@@ -56,9 +55,30 @@ export class DeviceRegistry {
     return this.listForUser(userId)[0];
   }
 
-  register(ws: WebSocket, userId: string, hello: DeviceHello, remoteAddr: string): Device {
+  /**
+   * Register a connected daemon. `id` must be a value stable across reconnects
+   * (the device_tokens.id from the daemon's bearer token, or a synthetic
+   * userId-scoped id for anon dev mode). Using a stable id is load-bearing:
+   * agent_sessions.preferred_device_id stores this value, so a daemon reboot
+   * cycling through random UUIDs would silently un-pin every session and let
+   * the cross-device fallback kick in.
+   *
+   * If a connection with the same id is already registered, the previous WS
+   * is closed and the new connection wins. This handles a daemon process
+   * restarting before the previous WS has been declared dead by the ping
+   * watchdog — without eviction, the stale entry would shadow the live one.
+   */
+  register(id: string, ws: WebSocket, userId: string, hello: DeviceHello, remoteAddr: string): Device {
+    const prior = this.devices.get(id);
+    if (prior && prior.ws !== ws) {
+      try {
+        prior.ws.close(4001, 'replaced by newer connection');
+      } catch {
+        /* ignore */
+      }
+    }
     const device: Device = {
-      id: randomUUID(),
+      id,
       userId,
       connectedAt: Date.now(),
       remoteAddr,
@@ -70,8 +90,18 @@ export class DeviceRegistry {
     return device;
   }
 
-  unregister(id: string): void {
-    if (this.devices.delete(id)) this.notify();
+  /**
+   * Remove a device from the registry. Pass `ws` when called from a close
+   * handler so we don't unregister a *newer* connection that replaced us in
+   * register(): the prior ws's close fires after the eviction and would
+   * otherwise drop the live entry.
+   */
+  unregister(id: string, ws?: WebSocket): void {
+    const cur = this.devices.get(id);
+    if (!cur) return;
+    if (ws && cur.ws !== ws) return;
+    this.devices.delete(id);
+    this.notify();
   }
 
   onChange(fn: (devices: Device[]) => void): () => void {

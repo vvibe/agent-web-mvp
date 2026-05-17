@@ -164,6 +164,7 @@ function MainApp({ me }: { me: Me }) {
         </div>
         <SessionList
           sessions={sessionList}
+          devices={devices}
           activeId={activeId}
           onSelect={setActiveId}
           onDelete={(id) => wsRef.current?.send({ type: 'delete_session', sessionId: id })}

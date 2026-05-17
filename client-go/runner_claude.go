@@ -62,6 +62,20 @@ func (r *claudeRunner) Run(
 	emit func(role, text string, meta map[string]any),
 	askPermission func(requestID, toolName string, input any),
 ) (string, error) {
+	// Validate cwd before spawning so we can return a specific error. Without
+	// this, exec returns a generic "chdir <path>: no such file or directory"
+	// which gets wrapped into "Cannot start Node bridge: …", misleading users
+	// into thinking the issue is node-on-PATH (it isn't — they likely opened
+	// the UI from a different machine where this path doesn't exist).
+	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+		hostname, _ := os.Hostname()
+		// Use backticks rather than %q for the cwd because %q escapes
+		// backslashes on Windows paths (C:\\Users\\...) and reads as noise.
+		msg := fmt.Sprintf("Working directory `%s` does not exist on this machine (%s). The session may have been created on a different device — bring that daemon online, or create a new session here.", cwd, hostname)
+		emit("system", msg, nil)
+		return "", fmt.Errorf("cwd does not exist: %s", cwd)
+	}
+
 	nodeBin := os.Getenv("AGENT_WEB_NODE")
 	if nodeBin == "" {
 		nodeBin = "node"

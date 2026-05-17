@@ -40,6 +40,16 @@ func (r *codexRunner) Run(
 		return "", fmt.Errorf("codex disabled by daemon policy")
 	}
 
+	// Same cwd-existence pre-check as runner_claude — surfaces a clear
+	// "session was created on a different device" message instead of the
+	// opaque chdir error from exec.
+	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+		hostname, _ := os.Hostname()
+		msg := fmt.Sprintf("Working directory `%s` does not exist on this machine (%s). The session may have been created on a different device — bring that daemon online, or create a new session here.", cwd, hostname)
+		emit("system", msg, nil)
+		return "", fmt.Errorf("cwd does not exist: %s", cwd)
+	}
+
 	bin := os.Getenv("CODEX_BIN")
 	if bin == "" {
 		bin = "codex"
