@@ -74,21 +74,34 @@ try {
     Fail "Extracted archive does not contain $Binary"
   }
 
+  # If the daemon is already running we can't overwrite the binary — the
+  # service holds an exclusive lock on Windows, and silently clobbering would
+  # leave a confusing Move-Item error. Detect and point at `vvibe upgrade`,
+  # which handles the stop/replace/start dance properly.
+  $destPath = Join-Path $InstallDir $Binary
+  if (Test-Path $destPath) {
+    $svc = Get-Service -Name 'Vvibe' -ErrorAction SilentlyContinue
+    $procs = Get-Process -Name 'vvibe' -ErrorAction SilentlyContinue
+    if (($svc -and $svc.Status -eq 'Running') -or $procs) {
+      Write-Warn "vvibe is already installed and currently running."
+      Write-Warn "  - To update in place, run: vvibe upgrade"
+      Write-Warn "  - Or stop it first: vvibe uninstall  (service)  /  Ctrl-C  (foreground)"
+      Fail "Aborting to avoid clobbering a running daemon."
+    }
+  }
+
   Write-Step "Installing to $InstallDir"
   New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-  # Move/replace the binary. If the file is in use (service running), this
-  # will fail loudly — the user should stop the service first.
-  Move-Item -Path $exe -Destination (Join-Path $InstallDir $Binary) -Force
+  Move-Item -Path $exe -Destination $destPath -Force
 
-  # Add to user PATH if not already there.
+  # Add to user PATH (persisted) AND refresh the current session so `vvibe`
+  # is immediately callable from this PowerShell window — including by the
+  # post-install `vvibe login` prompt below.
   $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
   if (-not ($userPath -split ';' | Where-Object { $_ -ieq $InstallDir })) {
     Write-Step "Adding $InstallDir to user PATH"
     [Environment]::SetEnvironmentVariable('Path', "$userPath;$InstallDir", 'User')
   }
-  # Update the *current* session's PATH too so `vvibe` works immediately,
-  # without forcing a new shell. New windows pick up the User-scoped value
-  # set above.
   if (-not ($env:Path -split ';' | Where-Object { $_ -ieq $InstallDir })) {
     $env:Path = "$env:Path;$InstallDir"
   }
@@ -108,7 +121,7 @@ Write-Host "Version:     $ver"
 # appear in the agent picker on the web UI. Surfaced here so the user sees
 # what's usable before pairing.
 Write-Step "Checking for agent CLIs"
-$missing = 0
+$missingTools = @()
 foreach ($tool in @('claude', 'codex')) {
   $cmd = Get-Command $tool -ErrorAction SilentlyContinue
   if ($cmd) {
@@ -117,19 +130,92 @@ foreach ($tool in @('claude', 'codex')) {
     else    { Write-Host "   [ok] $tool"      -ForegroundColor Green }
   } else {
     Write-Host "   [--] $tool not found on PATH" -ForegroundColor Yellow
-    $missing++
+    $missingTools += $tool
   }
 }
-if ($missing -gt 0) {
-  Write-Warn "Install the missing CLIs before sending prompts, or vvibe will report them as unavailable in the web UI."
+
+# Offer to install missing CLIs via npm. Node is a hard prerequisite for the
+# agent CLIs themselves, so we offer to install it first via winget if it's
+# missing — otherwise the user is stuck reading nodejs.org docs to come back.
+if ($missingTools.Count -gt 0) {
+  $npmPkg = @{ 'claude' = '@anthropic-ai/claude-code'; 'codex' = '@openai/codex' }
+  $npm = Get-Command npm -ErrorAction SilentlyContinue
+
+  if (-not $npm) {
+    Write-Host ""
+    Write-Warn "Node.js is required to install the agent CLIs but npm isn't on PATH."
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if ($winget) {
+      $reply = Read-Host "Install Node.js LTS now via 'winget install OpenJS.NodeJS.LTS'? [y/N]"
+      if ($reply -match '^[Yy]') {
+        Write-Step "Installing Node.js LTS via winget"
+        & winget install --id OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -eq 0) {
+          # winget updates machine/user PATH but the current PS session's
+          # $env:Path is stale. Re-read from the registry so npm is callable
+          # without telling the user to open a new window.
+          $env:Path = ([Environment]::GetEnvironmentVariable('Path', 'Machine')
+                       + ';' + [Environment]::GetEnvironmentVariable('Path', 'User'))
+          $npm = Get-Command npm -ErrorAction SilentlyContinue
+          if (-not $npm) {
+            Write-Warn "Node installed but npm still not on PATH in this session. Open a new PowerShell window and re-run this installer to finish."
+          }
+        } else {
+          Write-Warn "winget install failed (exit $LASTEXITCODE). Install Node manually from https://nodejs.org/ then re-run this installer."
+        }
+      } else {
+        Write-Warn "Install Node.js (https://nodejs.org/) then re-run this installer to finish."
+      }
+    } else {
+      Write-Warn "winget not available. Install Node.js LTS from https://nodejs.org/ then re-run this installer."
+    }
+  }
+
+  if ($npm) {
+    Write-Host ""
+    foreach ($tool in $missingTools) {
+      $pkg = $npmPkg[$tool]
+      $reply = Read-Host "Install $tool via 'npm install -g $pkg'? [y/N]"
+      if ($reply -match '^[Yy]') {
+        Write-Step "Installing $pkg"
+        & npm install -g $pkg
+        if ($LASTEXITCODE -ne 0) {
+          Write-Warn "npm install -g $pkg failed (exit $LASTEXITCODE). Install manually before pairing."
+        }
+      } else {
+        Write-Warn "Skipped $tool. vvibe will report it as unavailable in the web UI until you install it."
+      }
+    }
+  }
+}
+
+# ── Offer to pair this machine now ─────────────────────────────────────────
+# `vvibe login` is the obvious next step — the device-code flow opens a
+# browser and writes the paired token to disk. Doing it inline saves the
+# user a copy/paste and exercises the freshly installed binary.
+$loginDone = $false
+Write-Host ""
+$reply = Read-Host "Pair this machine with your account now ('vvibe login')? [Y/n]"
+if ($reply -notmatch '^[Nn]') {
+  Write-Step "Running vvibe login"
+  & $installedExe login
+  if ($LASTEXITCODE -eq 0) {
+    $loginDone = $true
+  } else {
+    Write-Warn "vvibe login exited with code $LASTEXITCODE. Run 'vvibe login' manually when ready."
+  }
 }
 
 Write-Host ""
 Write-Host "Next:"
-Write-Host "  1. Pair this machine:"
-Write-Host "       vvibe login"
+if ($loginDone) {
+  Write-Host "  [done] Paired."
+} else {
+  Write-Host "  1. Pair this machine:"
+  Write-Host "       vvibe login"
+}
 Write-Host ""
-Write-Host "  2. Register as a Windows service (needs Administrator PowerShell):"
+Write-Host "  $(if ($loginDone) { '1' } else { '2' }). Register as a Windows service (needs Administrator PowerShell):"
 Write-Host "       vvibe install"
 Write-Host "       vvibe status"
 Write-Host ""

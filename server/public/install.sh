@@ -44,6 +44,11 @@ case "$uname_m" in
   *) die "Unsupported arch: $uname_m" ;;
 esac
 
+# Used by interactive prompts below. `curl | sh` pipes the script over stdin,
+# so prompts must read from /dev/tty — skip prompts entirely without one.
+have_tty=1
+[ -r /dev/tty ] || have_tty=0
+
 asset="${ASSET_PREFIX}_${os}_${arch}.tar.gz"
 url="https://github.com/${REPO}/releases/latest/download/${asset}"
 checksums_url="https://github.com/${REPO}/releases/latest/download/checksums.txt"
@@ -100,6 +105,18 @@ bin="$TMPDIR/$BINARY"
 [ -f "$bin" ] || die "Extracted archive does not contain $BINARY binary"
 chmod +x "$bin"
 
+# If the daemon is already running, overwriting still "works" on Unix
+# (the open inode survives until the process exits) but the running
+# instance won't pick up the new binary until restart. Better to bail
+# with a clear pointer at `vvibe upgrade`, which handles stop/replace/start.
+if [ -e "$install_dir/$BINARY" ] && command -v pgrep >/dev/null 2>&1 \
+   && pgrep -x "$BINARY" >/dev/null 2>&1; then
+  warn "vvibe is already installed and currently running."
+  warn "  - To update in place, run: vvibe upgrade"
+  warn "  - Or stop it first: vvibe uninstall  (service)  /  Ctrl-C  (foreground)"
+  die "Aborting to avoid clobbering a running daemon."
+fi
+
 log "Installing to $install_dir/$BINARY"
 if [ -w "$install_dir" ]; then
   mv "$bin" "$install_dir/$BINARY"
@@ -107,6 +124,14 @@ else
   log "  (sudo needed to write $install_dir)"
   sudo mv "$bin" "$install_dir/$BINARY"
 fi
+
+# Refresh PATH for the rest of this script (and any child it spawns, like the
+# post-install `vvibe login` prompt). Persistence across future shells is
+# handled separately by the shell-rc writer below.
+case ":$PATH:" in
+  *":$install_dir:"*) ;;
+  *) export PATH="$install_dir:$PATH" ;;
+esac
 
 cat <<EOF
 
@@ -193,31 +218,131 @@ fi
 # appear in the agent picker on the web UI. Reported here so the user sees
 # what's actually usable before pairing.
 log "Checking for agent CLIs"
-missing=0
+missing_tools=''
 for tool in claude codex; do
   if command -v "$tool" >/dev/null 2>&1; then
     ver="$("$tool" --version 2>/dev/null | head -n1 || true)"
     printf '   [ok] %s%s\n' "$tool" "${ver:+ ($ver)}"
   else
     printf '   [--] %s not found on PATH\n' "$tool"
-    missing=$((missing + 1))
+    missing_tools="${missing_tools} ${tool}"
   fi
 done
-if [ "$missing" -gt 0 ]; then
-  warn "Install the missing CLIs before sending prompts, or vvibe will report them as unavailable in the web UI."
+
+# Offer to install missing CLIs via npm. Node is a hard prerequisite for the
+# agent CLIs themselves, so we offer to install it first via brew (macOS)
+# when possible — otherwise we point the user at concrete commands for their
+# distro rather than leaving them to guess.
+#
+# `curl | sh` pipes the script over stdin, so prompts must read from /dev/tty
+# — skip the interactive offer entirely when there's no controlling tty (CI,
+# fully non-interactive installs) and just print the manual commands.
+if [ -n "$missing_tools" ]; then
+  if ! command -v npm >/dev/null 2>&1; then
+    printf '\n'
+    warn "Node.js is required to install the agent CLIs but npm isn't on PATH."
+    if [ "$os" = "darwin" ] && command -v brew >/dev/null 2>&1 && [ "$have_tty" -eq 1 ]; then
+      printf "Install Node.js now via 'brew install node'? [y/N] " >/dev/tty
+      reply=''
+      read -r reply </dev/tty || reply=''
+      case "$reply" in
+        [Yy]*)
+          log "Installing Node.js via brew"
+          if ! brew install node; then
+            warn "brew install node failed. Install manually from https://nodejs.org/ then re-run this installer."
+          fi
+          ;;
+        *)
+          warn "Install Node.js (https://nodejs.org/) then re-run this installer to finish."
+          ;;
+      esac
+    else
+      warn "Install Node.js LTS, then re-run this installer to finish. Examples:"
+      case "$os" in
+        darwin)
+          printf '     brew install node\n' >&2
+          printf '     # or download installer from https://nodejs.org/\n' >&2
+          ;;
+        linux)
+          printf '     # Debian/Ubuntu:  sudo apt install -y nodejs npm\n' >&2
+          printf '     # Fedora/RHEL:    sudo dnf install -y nodejs npm\n' >&2
+          printf '     # Arch:           sudo pacman -S nodejs npm\n' >&2
+          printf '     # User-scope, no sudo: https://github.com/Schniz/fnm\n' >&2
+          ;;
+      esac
+    fi
+  fi
+
+  if command -v npm >/dev/null 2>&1; then
+    if [ "$have_tty" -eq 0 ]; then
+      warn "Missing CLIs detected, but no TTY available to prompt. Install manually:"
+      for tool in $missing_tools; do
+        case "$tool" in
+          claude) printf '     npm install -g @anthropic-ai/claude-code\n' ;;
+          codex)  printf '     npm install -g @openai/codex\n' ;;
+        esac
+      done
+    else
+      printf '\n'
+      for tool in $missing_tools; do
+        case "$tool" in
+          claude) pkg='@anthropic-ai/claude-code' ;;
+          codex)  pkg='@openai/codex' ;;
+        esac
+        printf "Install %s via 'npm install -g %s'? [y/N] " "$tool" "$pkg" >/dev/tty
+        reply=''
+        read -r reply </dev/tty || reply=''
+        case "$reply" in
+          [Yy]*)
+            log "Installing $pkg"
+            if ! npm install -g "$pkg"; then
+              warn "npm install -g $pkg failed. Install manually before pairing."
+            fi
+            ;;
+          *)
+            warn "Skipped $tool. vvibe will report it as unavailable in the web UI until you install it."
+            ;;
+        esac
+      done
+    fi
+  fi
+fi
+
+# ── Offer to pair this machine now ─────────────────────────────────────────
+# `vvibe login` opens a device-code flow in the browser. Doing it inline
+# saves a copy/paste and exercises the freshly installed binary. Stdin is
+# wired to /dev/tty in case the daemon ever reads from it during pairing.
+login_done=0
+if [ "$have_tty" -eq 1 ]; then
+  printf '\n'
+  printf "Pair this machine with your account now ('vvibe login')? [Y/n] " >/dev/tty
+  reply=''
+  read -r reply </dev/tty || reply=''
+  case "$reply" in
+    [Nn]*) ;;
+    *)
+      log "Running vvibe login"
+      if "$install_dir/$BINARY" login </dev/tty; then
+        login_done=1
+      else
+        warn "vvibe login exited with a non-zero status. Run 'vvibe login' manually when ready."
+      fi
+      ;;
+  esac
 fi
 
 # ── Next steps ─────────────────────────────────────────────────────────────
-cat <<EOF
-
-Next:
-  1. Pair this machine:
-       vvibe login
-
-  2. Register as a service (auto-start on boot):
-       vvibe install
-       vvibe status
-
-For Windows: see install.ps1.
-Manual / source builds: https://github.com/$REPO/tree/main/client-go
-EOF
+printf '\n'
+printf 'Next:\n'
+if [ "$login_done" -eq 1 ]; then
+  printf '  [done] Paired.\n\n'
+  printf '  1. Register as a service (auto-start on boot):\n'
+else
+  printf '  1. Pair this machine:\n'
+  printf '       vvibe login\n\n'
+  printf '  2. Register as a service (auto-start on boot):\n'
+fi
+printf '       vvibe install\n'
+printf '       vvibe status\n\n'
+printf 'For Windows: see install.ps1.\n'
+printf 'Manual / source builds: https://github.com/%s/tree/main/client-go\n' "$REPO"
