@@ -6,9 +6,20 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
+
+	"github.com/kardianos/service"
 )
+
+// die prints a one-line error to stderr and exits with a non-zero status.
+// Replaces log.Fatalf in user-facing command paths — log.Fatalf prefixes
+// timestamp + file:line, which reads like a crash to end users. Service
+// runtime code (relay, program.Start, etc.) still uses log.* so messages
+// land in the log file.
+func die(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "xx  "+format+"\n", args...)
+	os.Exit(1)
+}
 
 const (
 	serviceName        = "Vvibe"
@@ -35,7 +46,7 @@ func main() {
 
 	switch cmd {
 	case "install":
-		runInstall()
+		runInstall(args)
 	case "uninstall":
 		runUninstall()
 	case "start":
@@ -72,26 +83,34 @@ Usage:
   vvibe <command> [args]
 
 Commands:
-  install            Register this binary as an OS service (auto-start on boot)
-  uninstall          Remove the OS service
-  start / stop       Control the service
-  restart            Restart the service
-  status             Show service status
-  run                Run in the foreground (used by the service manager; also
-                     useful for testing without installing)
-  login --token=X --server=URL [--name=NAME]
-                     Save auth token, server URL, and display name to the config file
+  login --server=URL [--name=NAME]
+                     Pair this machine with your account. Opens a browser for
+                     device-code approval, then saves the token to the config.
+  login --token=TOKEN --server=URL [--name=NAME]
+                     (advanced) Save a pre-existing token, skipping the
+                     interactive flow. Used for scripting / migration.
+  run                Run in the foreground (prints logs to this terminal).
+                     Used by service managers; handy for testing without
+                     installing.
+  install [--force]  Register this binary as an OS service (auto-start on
+                     boot). Refuses if no token is configured — use --force
+                     to install anyway and login later.
+  uninstall          Remove the OS service. Leaves the config file in place.
+  start / stop / restart
+                     Control the installed service.
+  status             Show service state, configured server, token, log path.
+  show-config        Print the config file path and current contents.
   upgrade [--check]  Download and install the latest release from GitHub
-                     (stops + restarts the service around the swap)
-  show-config        Print the config file path and current contents
-  version            Print version
-  help               Show this help
+                     (stops + restarts the service around the swap).
+  version            Print version.
+  help               Show this help.
 
 Examples:
-  vvibe login --token=abc123 --server=ws://127.0.0.1:8787/client
-  sudo vvibe install        # macOS / Linux user-service usually does not need sudo
+  vvibe login --server=wss://your-app.fly.dev/client
+  vvibe run                  # foreground test
+  vvibe install              # register as service (Windows: needs Admin PS)
   vvibe status
-  vvibe upgrade --check     # show if an update is available without applying
+  vvibe upgrade --check      # report available update without applying
 `)
 }
 
@@ -104,7 +123,7 @@ func runLogin(args []string) {
 
 	cfg, err := loadConfig()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		die("load config: %v", err)
 	}
 	if *server != "" {
 		cfg.Server = *server
@@ -121,7 +140,7 @@ func runLogin(args []string) {
 	if *token != "" {
 		cfg.Token = *token
 		if err := saveConfig(cfg); err != nil {
-			log.Fatalf("save config: %v", err)
+			die("save config: %v", err)
 		}
 		p, _ := configPath()
 		fmt.Printf("saved → %s\n  server: %s\n  token:  %s\n  name:   %s\n", p, cfg.Server, maskToken(cfg.Token), cfg.DisplayName)
@@ -130,23 +149,52 @@ func runLogin(args []string) {
 
 	// Interactive device-code flow.
 	if err := pairInteractive(cfg); err != nil {
-		log.Fatalf("pair: %v", err)
+		die("pair: %v", err)
 	}
 	if err := saveConfig(cfg); err != nil {
-		log.Fatalf("save config: %v", err)
+		die("save config: %v", err)
 	}
 	p, _ := configPath()
 	fmt.Printf("\nsaved → %s\n  server: %s\n  token:  %s\n  name:   %s\n", p, cfg.Server, maskToken(cfg.Token), cfg.DisplayName)
+
+	printPostLoginHint()
+}
+
+// printPostLoginHint nudges the user toward actually starting the daemon
+// after pairing. Without this, `vvibe login` silently exits and the device
+// never appears in the web UI — a common "why isn't my machine showing up?"
+// trap. The hint adapts to whether the service is already installed.
+func printPostLoginHint() {
+	fmt.Println()
+	fmt.Println("Next: start the daemon so this machine appears in the web UI.")
+	if svc, err := newService(); err == nil {
+		if s, sErr := svc.Status(); sErr == nil {
+			switch s {
+			case service.StatusRunning:
+				fmt.Println("  Service is already running — restart it to pick up the new token:")
+				fmt.Println("    vvibe restart")
+				return
+			case service.StatusStopped:
+				fmt.Println("  Service is installed but stopped. Start it with:")
+				fmt.Println("    vvibe start")
+				return
+			}
+		}
+	}
+	fmt.Println("  Foreground (quick test, prints logs to this terminal):")
+	fmt.Println("    vvibe run")
+	fmt.Println("  Or register as a service so it auto-starts on boot:")
+	fmt.Println("    vvibe install")
 }
 
 func runShowConfig() {
 	p, err := configPath()
 	if err != nil {
-		log.Fatalf("config path: %v", err)
+		die("config path: %v", err)
 	}
 	cfg, err := loadConfig()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		die("load config: %v", err)
 	}
 	fmt.Printf("config file: %s\n", p)
 	fmt.Printf("server:      %s\n", cfg.Server)

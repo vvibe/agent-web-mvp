@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"time"
@@ -60,7 +59,7 @@ Flags:
 
 	source, err := selfupdate.NewGitHubSource(selfupdate.GitHubConfig{})
 	if err != nil {
-		log.Fatalf("init github source: %v", err)
+		die("init github source: %v", err)
 	}
 	updater, err := selfupdate.NewUpdater(selfupdate.Config{
 		Source: source,
@@ -70,13 +69,13 @@ Flags:
 		Validator: &selfupdate.ChecksumValidator{UniqueFilename: "checksums.txt"},
 	})
 	if err != nil {
-		log.Fatalf("init updater: %v", err)
+		die("init updater: %v", err)
 	}
 
 	repo := selfupdate.NewRepositorySlug(upgradeRepoOwner, upgradeRepoName)
 	release, found, err := updater.DetectLatest(ctx, repo)
 	if err != nil {
-		log.Fatalf("look up latest release: %v", err)
+		die("look up latest release: %v", err)
 	}
 	if !found {
 		fmt.Println("No releases published yet.")
@@ -105,7 +104,7 @@ Flags:
 
 	exe, err := os.Executable()
 	if err != nil {
-		log.Fatalf("locate own executable: %v", err)
+		die("locate own executable: %v", err)
 	}
 
 	// If the daemon is registered as an OS service, the running copy holds
@@ -122,7 +121,7 @@ Flags:
 		if svcRestart {
 			tryStartService()
 		}
-		log.Fatalf("update failed: %v", err)
+		die("update failed: %v", err)
 	}
 
 	if svcRestart {

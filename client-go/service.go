@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -77,15 +78,30 @@ func newService() (service.Service, error) {
 	return service.New(&program{}, cfg)
 }
 
-func runInstall() {
+func runInstall(args []string) {
+	fs := flag.NewFlagSet("install", flag.ExitOnError)
+	force := fs.Bool("force", false, "register the service even if no token is configured (login later)")
+	_ = fs.Parse(args)
+
+	// Without a token the daemon will start, log "no token configured" once,
+	// and idle forever — leaving the user staring at a green service with
+	// no device in the web UI. Refuse by default and point at `vvibe login`.
+	cfg, _ := loadConfig()
+	if (cfg == nil || cfg.Token == "") && !*force {
+		fmt.Fprintln(os.Stderr, "!!  no token configured — pair this machine first:")
+		fmt.Fprintln(os.Stderr, "      vvibe login --server=wss://your-app/client")
+		fmt.Fprintln(os.Stderr, "    or pass --force to install now and login later.")
+		os.Exit(1)
+	}
+
 	svc, err := newService()
 	if err != nil {
-		log.Fatalf("create service: %v", err)
+		die("create service: %v", err)
 	}
 	exe, _ := os.Executable()
 	fmt.Printf("installing service:\n  name:   %s\n  binary: %s\n", serviceName, exe)
 	if err := svc.Install(); err != nil {
-		log.Fatalf("install: %v", err)
+		die("install: %v", err)
 	}
 	fmt.Println("installed.")
 	if err := svc.Start(); err != nil {
@@ -99,13 +115,13 @@ func runInstall() {
 func runUninstall() {
 	svc, err := newService()
 	if err != nil {
-		log.Fatalf("create service: %v", err)
+		die("create service: %v", err)
 	}
 	if err := svc.Stop(); err != nil {
 		fmt.Printf("stop: %v (continuing)\n", err)
 	}
 	if err := svc.Uninstall(); err != nil {
-		log.Fatalf("uninstall: %v", err)
+		die("uninstall: %v", err)
 	}
 	fmt.Println("uninstalled.")
 }
@@ -113,7 +129,7 @@ func runUninstall() {
 func runSvcAction(action string) {
 	svc, err := newService()
 	if err != nil {
-		log.Fatalf("create service: %v", err)
+		die("create service: %v", err)
 	}
 	switch action {
 	case "start":
@@ -124,39 +140,54 @@ func runSvcAction(action string) {
 		err = svc.Restart()
 	}
 	if err != nil {
-		log.Fatalf("%s: %v", action, err)
+		die("%s: %v", action, err)
 	}
 	fmt.Println(action, "ok")
 }
 
+// runStatus reports service state plus enough config to diagnose the common
+// "service is running but my device isn't in the web UI" trap — almost
+// always a missing token or wrong server URL. Showing both inline saves a
+// second `vvibe show-config` round-trip.
 func runStatus() {
 	svc, err := newService()
 	if err != nil {
-		log.Fatalf("create service: %v", err)
+		die("create service: %v", err)
 	}
-	s, err := svc.Status()
-	if err != nil {
-		fmt.Printf("status: error (%v) — service may not be installed\n", err)
-		return
+	stateStr := "unknown"
+	if s, sErr := svc.Status(); sErr != nil {
+		stateStr = fmt.Sprintf("not installed (%v)", sErr)
+	} else {
+		switch s {
+		case service.StatusRunning:
+			stateStr = "running"
+		case service.StatusStopped:
+			stateStr = "stopped"
+		}
 	}
-	switch s {
-	case service.StatusRunning:
-		fmt.Println("status: running")
-	case service.StatusStopped:
-		fmt.Println("status: stopped")
-	default:
-		fmt.Println("status: unknown")
+	fmt.Printf("status:  %s\n", stateStr)
+
+	cfg, cfgErr := loadConfig()
+	if cfgErr != nil {
+		fmt.Printf("config:  error (%v)\n", cfgErr)
+	} else {
+		fmt.Printf("server:  %s\n", cfg.Server)
+		fmt.Printf("token:   %s\n", maskToken(cfg.Token))
+		if cfg.DisplayName != "" {
+			fmt.Printf("name:    %s\n", cfg.DisplayName)
+		}
 	}
+	fmt.Printf("log:     %s\n", mustLogPath())
 }
 
 func runForeground() {
 	svc, err := newService()
 	if err != nil {
-		log.Fatalf("create service: %v", err)
+		die("create service: %v", err)
 	}
 	// svc.Run() blocks. It detects whether we're under a service manager and
 	// integrates with it; if not, it runs as a regular process and we can Ctrl-C.
 	if err := svc.Run(); err != nil {
-		log.Fatalf("run: %v", err)
+		die("run: %v", err)
 	}
 }
