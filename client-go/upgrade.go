@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -54,9 +56,6 @@ Flags:
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	source, err := selfupdate.NewGitHubSource(selfupdate.GitHubConfig{})
 	if err != nil {
 		die("init github source: %v", err)
@@ -72,10 +71,18 @@ Flags:
 		die("init updater: %v", err)
 	}
 
+	// Two separate contexts: the latest-release lookup is a single small API
+	// call (fast budget), but the download phase pulls the full asset over
+	// what may be a slow link from the user's region to GitHub's edge — a
+	// shared 30s budget produced `context deadline exceeded` on perfectly
+	// healthy networks once the lookup ate part of it.
+	detectCtx, detectCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer detectCancel()
+
 	repo := selfupdate.NewRepositorySlug(upgradeRepoOwner, upgradeRepoName)
-	release, found, err := updater.DetectLatest(ctx, repo)
+	release, found, err := updater.DetectLatest(detectCtx, repo)
 	if err != nil {
-		die("look up latest release: %v", err)
+		exitFriendly("look up latest release", err)
 	}
 	if !found {
 		fmt.Println("No releases published yet.")
@@ -114,14 +121,20 @@ Flags:
 	// service comes back on the new version without a kill -HUP.
 	svcRestart := stopServiceIfRunning()
 
+	// Generous timeout for the asset fetch + download — covers slow links
+	// from regions far from GitHub's edge and accounts for the daemon binary
+	// size (~10MB).
+	downloadCtx, downloadCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer downloadCancel()
+
 	fmt.Println("Downloading + verifying…")
-	if err := updater.UpdateTo(ctx, release, exe); err != nil {
+	if err := updater.UpdateTo(downloadCtx, release, exe); err != nil {
 		// Best-effort: try to bring the service back up on the OLD binary
 		// before we exit, so the user isn't left with a dead daemon.
 		if svcRestart {
 			tryStartService()
 		}
-		die("update failed: %v", err)
+		exitFriendly("update", err)
 	}
 
 	if svcRestart {
@@ -194,5 +207,54 @@ func isTerminal(f *os.File) bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// exitFriendly turns a raw upgrade error into a message the user can act on.
+// Network/timeout failures get a "retry — usually transient" hint so the
+// user knows whether to try again or report a bug; everything else
+// delegates to die() so the output style matches the rest of the CLI.
+func exitFriendly(stage string, err error) {
+	if !isTransientNetErr(err) {
+		die("%s failed: %v", stage, err)
+	}
+	fmt.Fprintf(os.Stderr, "xx  %s failed: %v\n", stage, err)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "This looks like a transient network or GitHub API issue.")
+	fmt.Fprintln(os.Stderr, "Re-run the command — most of the time the retry succeeds.")
+	os.Exit(1)
+}
+
+// isTransientNetErr returns true for errors the user can reasonably resolve
+// by retrying: context deadline, low-level net timeouts, DNS resolution
+// blips, and obvious GitHub-API timeout strings that don't surface as
+// typed errors through the selfupdate library's wrapping.
+func isTransientNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	// go-selfupdate wraps GitHub API errors as plain `fmt.Errorf` strings
+	// that swallow the typed cause, so fall back to substring matching for
+	// the common timeout/DNS/connect-refused phrases.
+	msg := err.Error()
+	for _, hint := range []string{
+		"context deadline exceeded",
+		"i/o timeout",
+		"no such host",
+		"connection refused",
+		"connection reset",
+		"TLS handshake timeout",
+	} {
+		if strings.Contains(msg, hint) {
+			return true
+		}
+	}
+	return false
 }
 
