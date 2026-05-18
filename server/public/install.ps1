@@ -136,7 +136,11 @@ if ($ServerUrl -match '^wss?://') {
     Write-Step "Config already exists at $configFile — keeping existing server URL"
   } else {
     New-Item -ItemType Directory -Path $configDir -Force | Out-Null
-    @{ server = $ServerUrl } | ConvertTo-Json -Compress | Set-Content -Path $configFile -Encoding UTF8
+    # Windows PowerShell 5.1's `Set-Content -Encoding UTF8` writes a BOM,
+    # which Go's encoding/json rejects with "invalid character 'ï'". Use
+    # the .NET API with an explicit no-BOM UTF-8 encoder instead.
+    $json = (@{ server = $ServerUrl } | ConvertTo-Json -Compress)
+    [System.IO.File]::WriteAllText($configFile, $json, [System.Text.UTF8Encoding]::new($false))
     Write-Step "Seeded config -> $configFile"
     Write-Host "   server: $ServerUrl"
   }

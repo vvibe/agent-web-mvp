@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +66,10 @@ func loadConfig() (*Config, error) {
 		}
 		return nil, err
 	}
+	// Strip UTF-8 BOM if present. Windows PowerShell 5.1's `Set-Content
+	// -Encoding UTF8` and Notepad-saved-as-UTF-8 both prepend one, and
+	// encoding/json rejects it as "invalid character 'ï'".
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 	var c Config
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", p, err)
