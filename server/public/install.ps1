@@ -179,9 +179,12 @@ if ($missingTools.Count -gt 0) {
         if ($LASTEXITCODE -eq 0) {
           # winget updates machine/user PATH but the current PS session's
           # $env:Path is stale. Re-read from the registry so npm is callable
-          # without telling the user to open a new window.
-          $env:Path = ([Environment]::GetEnvironmentVariable('Path', 'Machine')
-                       + ';' + [Environment]::GetEnvironmentVariable('Path', 'User'))
+          # without telling the user to open a new window. Kept on one
+          # statement per line — `iex` of a piped-in string trips on
+          # multi-line parenthesized expressions on some PS 5.1 setups.
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          $userPath2 = [Environment]::GetEnvironmentVariable('Path', 'User')
+          $env:Path = "$machinePath;$userPath2"
           $npm = Get-Command npm -ErrorAction SilentlyContinue
           if (-not $npm) {
             Write-Warn "Node installed but npm still not on PATH in this session. Open a new PowerShell window and re-run this installer to finish."
