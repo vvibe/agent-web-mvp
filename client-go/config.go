@@ -37,6 +37,13 @@ type Config struct {
 	// the heuristic dir-scanner missed). Best-effort: empty on
 	// non-Windows or when no agent CLI was reachable at install time.
 	AgentBinDirs []string `json:"agent_bin_dirs,omitempty"`
+	// UserHomeDir is the interactive user's home directory captured at
+	// `vvibe install` time. The directory picker uses this as its
+	// default starting point — without it, the daemon (on Windows
+	// LocalSystem, or accidentally on macOS/Linux as root) reports its
+	// own profile (C:\WINDOWS\system32\config\systemprofile or /root)
+	// and the user has to manually type their way to a sensible cwd.
+	UserHomeDir string `json:"user_home_dir,omitempty"`
 }
 
 // appDir returns the directory that holds client.json and client.log.

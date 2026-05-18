@@ -56,19 +56,59 @@ func augmentPATHForAgents() {
 		len(add), strings.Join(add, " ; "))
 }
 
-// snapshotAgentBinDirs records the directories that contain working
-// `claude` / `codex` / `node` on the *current* process's PATH and writes
-// them into client.json. Called from `vvibe install` (interactive user
-// context) so the daemon later has authoritative locations even when
-// they're outside the heuristic scanner's coverage (e.g. claude's native
-// installer drops claude.exe under %USERPROFILE%\.local\bin, which no
-// node-version-manager knows about).
+// snapshotInteractiveUserEnv records what the daemon won't be able to
+// figure out for itself once it's running under a different identity:
+//   - agent bin dirs (Windows only — see snapshotAgentBinDirs comment)
+//   - the interactive user's home dir (every platform; defensive against
+//     `vvibe install` being run as root on Unix, where the daemon would
+//     otherwise think /root is "home" and offer a useless folder picker
+//     default)
 //
-// Best-effort: any individual step that fails is logged and skipped —
-// install must succeed even when no agent CLI is reachable yet.
-func snapshotAgentBinDirs() {
-	if runtime.GOOS != "windows" {
+// Called from `vvibe install`. Best-effort: any individual step that
+// fails is logged and skipped so install can still succeed.
+func snapshotInteractiveUserEnv() {
+	cfg, err := loadConfig()
+	if err != nil || cfg == nil {
+		if err != nil {
+			log.Printf("snapshot: skip (config load failed: %v)", err)
+		}
 		return
+	}
+
+	// Always refresh — re-running install means "this is the canonical
+	// user/agent layout now", not "merge with whatever was there".
+	cfg.AgentBinDirs = collectAgentBinDirs()
+	if home, herr := os.UserHomeDir(); herr == nil && home != "" {
+		cfg.UserHomeDir = home
+	}
+
+	if err := saveConfig(cfg); err != nil {
+		log.Printf("snapshot: skip (config save failed: %v)", err)
+		return
+	}
+
+	if runtime.GOOS == "windows" {
+		if len(cfg.AgentBinDirs) == 0 {
+			fmt.Println("note: no claude/codex/node found on PATH yet — install one, then re-run `vvibe install` to refresh the snapshot.")
+		} else {
+			fmt.Printf("snapshot: recorded %d agent bin dir(s) for the service to inherit.\n", len(cfg.AgentBinDirs))
+		}
+	}
+	if cfg.UserHomeDir != "" {
+		fmt.Printf("snapshot: user home recorded as %s (folder picker default).\n", cfg.UserHomeDir)
+	}
+}
+
+// collectAgentBinDirs returns the directories that contain working
+// `claude` / `codex` / `node` on the *current* process's PATH. The
+// caller (snapshotInteractiveUserEnv) persists the result. Windows-only:
+// on macOS/Linux the daemon runs as the same user, so its own
+// exec.LookPath at runtime is just as good as snapshotting at install
+// time and skipping the file write saves a config-version bump for
+// users who paired before this field existed.
+func collectAgentBinDirs() []string {
+	if runtime.GOOS != "windows" {
+		return nil
 	}
 	seen := map[string]struct{}{}
 	var dirs []string
@@ -85,31 +125,7 @@ func snapshotAgentBinDirs() {
 		seen[key] = struct{}{}
 		dirs = append(dirs, d)
 	}
-
-	cfg, err := loadConfig()
-	if err != nil || cfg == nil {
-		// Don't refuse install just because config can't be read.
-		// loadConfig returns a default when the file is missing,
-		// so a real error here means a parse failure — surface it
-		// to the user but keep going.
-		if err != nil {
-			log.Printf("snapshot: skip (config load failed: %v)", err)
-		}
-		return
-	}
-	// Re-running install should refresh the snapshot, not append. The
-	// user may have reinstalled claude in a different location since
-	// the previous install and the stale dir is unhelpful.
-	cfg.AgentBinDirs = dirs
-	if err := saveConfig(cfg); err != nil {
-		log.Printf("snapshot: skip (config save failed: %v)", err)
-		return
-	}
-	if len(dirs) == 0 {
-		fmt.Println("note: no claude/codex/node found on PATH yet — install one, then re-run `vvibe install` to refresh the snapshot.")
-	} else {
-		fmt.Printf("snapshot: recorded %d agent bin dir(s) for the service to inherit.\n", len(dirs))
-	}
+	return dirs
 }
 
 // loadSnapshotAgentBinDirs reads Config.AgentBinDirs without exposing

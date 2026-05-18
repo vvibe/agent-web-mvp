@@ -8,21 +8,28 @@ import (
 	"testing"
 )
 
-// TestSnapshotAgentBinDirsRoundtrip exercises the install-time snapshot
-// (snapshotAgentBinDirs) and the daemon-time read (loadSnapshotAgentBinDirs)
-// against a real on-disk client.json under a temp %ProgramData%.
+// TestSnapshotInteractiveUserEnvRoundtrip exercises the install-time
+// snapshot and the daemon-time read against a real on-disk client.json
+// under a temp %ProgramData%.
 //
-// The motivating bug: claude installed via Anthropic's native installer
-// lands in %USERPROFILE%\.local\bin, which the heuristic Windows scanner
-// in discoverWindowsAgentDirs did not enumerate — so the LocalSystem
-// service couldn't see claude even when the interactive shell could.
-// Snapshotting `exec.LookPath` results during install bypasses the
-// scanner's coverage gaps entirely.
-//
-// Windows-only: snapshotAgentBinDirs is a no-op elsewhere.
-func TestSnapshotAgentBinDirsRoundtrip(t *testing.T) {
+// Motivating bugs:
+//   - claude installed via Anthropic's native installer lands in
+//     %USERPROFILE%\.local\bin, which the heuristic Windows scanner in
+//     discoverWindowsAgentDirs did not enumerate. The LocalSystem
+//     service couldn't see claude even when the interactive shell
+//     could. Snapshotting exec.LookPath bypasses the scanner.
+//   - The folder picker defaulted to whatever os.UserHomeDir returned
+//     under the daemon's identity — C:\WINDOWS\system32\config\
+//     systemprofile under LocalSystem. Snapshotting the interactive
+//     user's home dir fixes the default.
+func TestSnapshotInteractiveUserEnvRoundtrip(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("snapshotAgentBinDirs is windows-only")
+		// On macOS/Linux the agent-bin-dirs path is intentionally
+		// nil (daemon runs as the same user) — but home dir snapshot
+		// still runs everywhere. Keeping the test Windows-only for
+		// now because the fakeBin setup needs .exe semantics; the
+		// home-dir branch is covered separately by TestResolvedHomeDir.
+		t.Skip("agent-bin-dir snapshot is windows-only")
 	}
 
 	// Redirect appDir() onto a clean temp tree so we don't clobber the
@@ -50,7 +57,7 @@ func TestSnapshotAgentBinDirsRoundtrip(t *testing.T) {
 		t.Fatalf("seed config: %v", err)
 	}
 
-	snapshotAgentBinDirs()
+	snapshotInteractiveUserEnv()
 
 	got := loadSnapshotAgentBinDirs()
 	if len(got) == 0 {
@@ -70,13 +77,18 @@ func TestSnapshotAgentBinDirsRoundtrip(t *testing.T) {
 		t.Fatalf("snapshot missing %s; got %v", fakeBin, got)
 	}
 
-	// Token/server must be preserved — the install path saves the config
-	// back, so a sloppy implementation that zeroes other fields would
-	// brick the user's pairing.
+	// Home dir must be captured (every platform).
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatalf("reload config: %v", err)
 	}
+	if cfg.UserHomeDir == "" {
+		t.Fatalf("expected UserHomeDir to be recorded, got empty")
+	}
+
+	// Token/server must be preserved — the install path saves the config
+	// back, so a sloppy implementation that zeroes other fields would
+	// brick the user's pairing.
 	if cfg.Token != "test-token" {
 		t.Fatalf("token clobbered: got %q", cfg.Token)
 	}
@@ -90,7 +102,7 @@ func TestSnapshotAgentBinDirsRoundtrip(t *testing.T) {
 // claude in a different location should not have the stale dir linger.
 func TestSnapshotAgentBinDirsRefreshes(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("snapshotAgentBinDirs is windows-only")
+		t.Skip("agent-bin-dir snapshot is windows-only")
 	}
 	tmp := t.TempDir()
 	t.Setenv("ProgramData", tmp)
@@ -107,10 +119,61 @@ func TestSnapshotAgentBinDirsRefreshes(t *testing.T) {
 	// so the resulting dir list should be empty (and overwrite the stale
 	// entry, not append to it).
 	t.Setenv("PATH", "")
-	snapshotAgentBinDirs()
+	snapshotInteractiveUserEnv()
 
 	got := loadSnapshotAgentBinDirs()
 	if len(got) != 0 {
 		t.Fatalf("expected stale dir to be cleared, got %v", got)
+	}
+}
+
+// TestResolvedHomeDirPrefersSnapshot covers the folder-picker default.
+// Without the snapshot, the daemon's own os.UserHomeDir wins — under
+// LocalSystem that's systemprofile, which is useless. With the
+// snapshot, the picker should use the recorded path.
+func TestResolvedHomeDirPrefersSnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+
+	// Create a real dir to act as the user's "home", because
+	// resolvedHomeDir validates the path exists before returning it.
+	fakeHome := filepath.Join(tmp, "fakeHome")
+	if err := os.MkdirAll(fakeHome, 0o700); err != nil {
+		t.Fatalf("mkdir fakeHome: %v", err)
+	}
+	if err := saveConfig(&Config{
+		Server:      defaultServer,
+		UserHomeDir: fakeHome,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got := resolvedHomeDir()
+	if got != fakeHome {
+		t.Fatalf("resolvedHomeDir = %q, want %q", got, fakeHome)
+	}
+}
+
+// TestResolvedHomeDirFallsBackOnStaleSnapshot ensures we don't blindly
+// trust a recorded path that no longer exists (e.g. user dir got
+// renamed). Falling back to os.UserHomeDir at least gets the user
+// somewhere they can navigate from.
+func TestResolvedHomeDirFallsBackOnStaleSnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("ProgramData", tmp)
+
+	if err := saveConfig(&Config{
+		Server:      defaultServer,
+		UserHomeDir: filepath.Join(tmp, "does-not-exist"),
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got := resolvedHomeDir()
+	if got == "" {
+		t.Fatalf("expected fallback to os.UserHomeDir, got empty")
+	}
+	if got == filepath.Join(tmp, "does-not-exist") {
+		t.Fatalf("returned the stale snapshot instead of falling back")
 	}
 }

@@ -16,12 +16,16 @@ func handleListDir(s *wsSender, msg map[string]any) {
 	}
 	path, _ := msg["path"].(string)
 	if path == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			sendListing(s, requestID, "", "", nil, err.Error())
+		// Prefer the home dir snapshotted at `vvibe install`. The
+		// daemon's own os.UserHomeDir() returns the wrong thing under
+		// LocalSystem (C:\WINDOWS\system32\config\systemprofile) and
+		// under any sudoed Unix install (/root) — both nominally exist
+		// but contain nothing the user wants to start a session in.
+		path = resolvedHomeDir()
+		if path == "" {
+			sendListing(s, requestID, "", "", nil, "no home dir available")
 			return
 		}
-		path = home
 	} else {
 		// Reject relative paths — they'd resolve against the daemon's cwd,
 		// which is unpredictable when running as a service.
@@ -62,6 +66,32 @@ func handleListDir(s *wsSender, msg map[string]any) {
 	}
 
 	sendListing(s, requestID, path, parent, dirs, "")
+}
+
+// resolvedHomeDir returns the home directory the folder picker should
+// default to. Resolution order:
+//
+//  1. Config.UserHomeDir — recorded by `vvibe install` from the
+//     interactive user's process. Authoritative when set.
+//  2. os.UserHomeDir() — the daemon's own home. Right on macOS/Linux
+//     when the daemon runs as the user; wrong (but harmless) on Windows
+//     LocalSystem.
+//
+// Returns "" only when both fail.
+func resolvedHomeDir() string {
+	if cfg, err := loadConfig(); err == nil && cfg != nil && cfg.UserHomeDir != "" {
+		if fi, err := os.Stat(cfg.UserHomeDir); err == nil && fi.IsDir() {
+			return cfg.UserHomeDir
+		}
+		// Snapshot is stale (user dir moved/deleted) — fall through to
+		// the runtime lookup. Worth logging once because this is the
+		// kind of state where the user will be confused why the picker
+		// keeps landing somewhere weird.
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
+	}
+	return ""
 }
 
 func sendListing(s *wsSender, requestID, path, parent string, entries []map[string]any, errMsg string) {

@@ -95,16 +95,13 @@ func runInstall(args []string) {
 		os.Exit(1)
 	}
 
-	// Snapshot where the interactive user's `claude` / `codex` / `node`
-	// actually live. The dirs go into client.json and the daemon prepends
-	// them to its own PATH at startup — the heuristic Windows scanner
-	// in agent_paths.go can't enumerate every node-version-manager or
-	// native-installer layout, so trusting `exec.LookPath` from the
-	// user's process is strictly better than guessing.
-	//
-	// Done before svc.Install so a non-admin first attempt still leaves
-	// the snapshot behind for the admin retry (and for `vvibe doctor`).
-	snapshotAgentBinDirs()
+	// Snapshot the interactive user's environment (agent bin dirs +
+	// home dir) into client.json. The daemon runs under a different
+	// identity (LocalSystem on Windows; potentially root on Unix if
+	// install was sudoed) and can't reconstruct either of these on its
+	// own. Done before svc.Install so a non-admin first attempt still
+	// leaves the snapshot behind for the admin retry and for doctor.
+	snapshotInteractiveUserEnv()
 
 	svc, err := newService()
 	if err != nil {
