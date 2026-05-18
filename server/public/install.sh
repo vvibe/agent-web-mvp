@@ -384,6 +384,19 @@ else
   printf '  2. Register as a service (auto-start on boot):\n'
 fi
 printf '       vvibe install\n'
-printf '       vvibe status\n\n'
-printf 'For Windows: see install.ps1.\n'
+printf '       vvibe status\n'
+
+# If the installer just appended to a shell rc, the user's current terminal
+# can't see vvibe yet — only new shells will. The post-install commands
+# above will fail with `command not found` until they reload, so reprint
+# the hint right before they reach for it.
+if [ -n "$path_modified_file" ]; then
+  printf '\n'
+  printf "Heads up: vvibe is on PATH only in NEW terminal windows (%s was\n" "$path_modified_file"
+  printf "updated, but your current shell hasn't reloaded it). To run the\n"
+  printf "commands above in *this* terminal first:\n"
+  printf '    source %s\n' "$path_modified_file"
+fi
+
+printf '\nFor Windows: see install.ps1.\n'
 printf 'Manual / source builds: https://github.com/%s/tree/main/client-go\n' "$REPO"
