@@ -123,9 +123,13 @@ Write-Host "Version:     $ver"
 # ── Seed daemon config with server URL ─────────────────────────────────────
 # When this script was served by the vvibe HTTP server it substitutes its own
 # WS URL into $ServerUrl above. Write it into the daemon config so
-# `vvibe login` doesn't need --server. Skipped if the placeholder is still
-# present or a config file already exists.
-if ($ServerUrl -ne '__VVIBE_SERVER_URL__' -and -not [string]::IsNullOrWhiteSpace($ServerUrl)) {
+# `vvibe login` doesn't need --server.
+#
+# We check the SHAPE (ws:// or wss:// prefix) rather than comparing against
+# the placeholder literal — the literal would itself be substituted by the
+# server (both occurrences look the same to it), which would invert the
+# check and silently skip the seed.
+if ($ServerUrl -match '^wss?://') {
   $configDir = Join-Path $env:APPDATA 'vvibe'
   $configFile = Join-Path $configDir 'client.json'
   if (Test-Path $configFile) {

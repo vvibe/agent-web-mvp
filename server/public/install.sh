@@ -220,19 +220,24 @@ fi
 
 # ── Seed daemon config with server URL ─────────────────────────────────────
 # When this script was served by the vvibe HTTP server it knows its own
-# externally-reachable URL and substitutes it into SERVER_URL above. We write
-# that into the daemon config so `vvibe login` doesn't need --server. Skipped
-# if (a) the placeholder is still present (running from a local copy), or
-# (b) a config file already exists (don't clobber a working install).
+# externally-reachable URL and substitutes it into SERVER_URL above. We seed
+# the daemon config from that so `vvibe login` doesn't need --server.
+#
+# We deliberately check the SHAPE of SERVER_URL (must start with ws:// or
+# wss://) rather than comparing against the placeholder string — the latter
+# would itself get substituted by the server (the placeholder literal in the
+# pattern is just text from the server's PoV), inverting the check and
+# silently skipping the seed. Shape-matching is also robust to future
+# placeholder renames.
 case "$SERVER_URL" in
-  __VVIBE_SERVER_URL__*|"") ;;
-  *)
+  ws://*|wss://*)
     if [ "$os" = darwin ]; then
       config_dir="$HOME/Library/Application Support/vvibe"
     else
       config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/vvibe"
     fi
     config_file="$config_dir/client.json"
+    # Don't clobber a working install — the existing token + server stay put.
     if [ -f "$config_file" ]; then
       log "Config already exists at $config_file — keeping existing server URL"
     else

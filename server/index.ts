@@ -142,7 +142,13 @@ function serveInstallScript(filename: string) {
       res.status(404).type('text/plain').send('Not Found');
       return;
     }
-    content = content.split(SERVER_URL_PLACEHOLDER).join(installScriptWsURL);
+    // Replace only the FIRST occurrence. The placeholder is meant to appear
+    // exactly once (the variable assignment near the top of the script);
+    // any other occurrence — even in a comment — should remain literal.
+    // Replacing all caused install.sh to silently skip its config-seed step
+    // because the placeholder also lived inside a `case "$SERVER_URL"`
+    // pattern, which then got rewritten to match the substituted value.
+    content = content.replace(SERVER_URL_PLACEHOLDER, installScriptWsURL);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     res.send(content);
