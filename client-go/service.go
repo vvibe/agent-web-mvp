@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/kardianos/service"
 )
@@ -101,9 +102,24 @@ func runInstall(args []string) {
 	exe, _ := os.Executable()
 	fmt.Printf("installing service:\n  name:   %s\n  binary: %s\n", serviceName, exe)
 	if err := svc.Install(); err != nil {
-		die("install: %v", err)
+		// "service already exists" is the common case when re-running
+		// `vvibe install` to refresh the SDK / repair a half-broken setup.
+		// Don't abort — let the rest of this function (SDK install, start)
+		// still run. Other errors (permission denied, etc.) are still fatal.
+		if strings.Contains(strings.ToLower(err.Error()), "already") {
+			fmt.Printf("note: service already installed (%v) — continuing.\n", err)
+		} else {
+			die("install: %v", err)
+		}
+	} else {
+		fmt.Println("installed.")
 	}
-	fmt.Println("installed.")
+
+	// Bridge needs @anthropic-ai/claude-agent-sdk reachable. Install it now
+	// while we have the interactive user's npm; the LocalSystem service that
+	// runs later can only *read* node_modules, not provision it.
+	ensureClaudeSDK()
+
 	if err := svc.Start(); err != nil {
 		fmt.Printf("warning: could not start immediately: %v\n", err)
 		fmt.Println("you can run `vvibe start` manually, or reboot.")

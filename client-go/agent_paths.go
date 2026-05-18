@@ -76,9 +76,11 @@ func discoverWindowsAgentDirs() []string {
 	}
 
 	candidates = append(candidates,
-		`C:\Program Files\nodejs`,
-		`C:\Program Files (x86)\nodejs`,
+		`C:\Program Files\nodejs`,           // standard installer + nvm-windows symlink target
+		`C:\Program Files (x86)\nodejs`,     // 32-bit installer
 		`C:\ProgramData\scoop\apps\nodejs\current`,
+		`C:\ProgramData\chocolatey\bin`,     // chocolatey shims (node, npm, claude/codex if user `choco install`'d)
+		`C:\ProgramData\chocolatey\lib\nodejs\tools`,
 	)
 
 	var out []string

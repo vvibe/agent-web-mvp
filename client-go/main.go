@@ -65,6 +65,8 @@ func main() {
 		runUpgrade(args)
 	case "show-config":
 		runShowConfig()
+	case "sdk":
+		runSdkInstall()
 	case "version":
 		fmt.Printf("vvibe %s (commit %s, built %s)\n", version, commit, date)
 	case "help", "-h", "--help":
@@ -100,6 +102,10 @@ Commands:
                      Control the installed service.
   status             Show service state, configured server, token, log path.
   show-config        Print the config file path and current contents.
+  sdk                Install @anthropic-ai/claude-agent-sdk next to the
+                     bridge so Claude sessions can resolve it. Runs
+                     implicitly during 'install'; rerun manually if it
+                     failed (e.g. you didn't have npm yet).
   upgrade [--check]  Download and install the latest release from GitHub
                      (stops + restarts the service around the swap).
   version            Print version.
