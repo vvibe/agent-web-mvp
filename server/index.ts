@@ -10,9 +10,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ClientMessage, DaemonClientMessage, DeviceInfo, ServerMessage } from '../shared/types.ts';
-import { isAllowedClaudeModel } from '../shared/types.ts';
+import {
+  isAllowedClaudeModel,
+  DaemonClientMessageSchema,
+  DeviceHelloMessageSchema,
+} from '../shared/types.ts';
 import { SessionStore, makeRunnerFactory, type Session } from './sessions.ts';
-import { DeviceRegistry, type DeviceHello } from './devices.ts';
+import { DeviceRegistry } from './devices.ts';
 import { stmts } from './db.ts';
 import {
   isAuthEnabled,
@@ -334,37 +338,68 @@ clientWss.on('connection', (ws, req) => {
   }, 10_000);
 
   ws.on('message', (raw) => {
-    let msg: any;
+    let parsed: unknown;
     try {
-      msg = JSON.parse(raw.toString());
+      parsed = JSON.parse(raw.toString());
     } catch {
       return;
     }
-    if (!helloReceived && msg.type === 'hello') {
+
+    // Pre-hello: only accept a valid `hello` frame. Anything else
+    // (including malformed hello) is silently dropped; the hello timeout
+    // closes the socket if a valid hello doesn't arrive in 10s.
+    if (!helloReceived) {
+      const helloResult = DeviceHelloMessageSchema.safeParse(parsed);
+      if (!helloResult.success) {
+        console.warn(
+          `[client] rejected pre-hello frame from ${remoteAddr}: ${helloResult.error.message}`,
+        );
+        return;
+      }
       helloReceived = true;
       clearTimeout(helloTimer);
-      const hello = msg as DeviceHello & { type: string };
+      // Strip the wire-level `type` discriminator before handing to the
+      // registry; DeviceHello is the in-memory shape and doesn't carry it.
+      const { type: _t, ...hello } = helloResult.data;
       const device = devices.register(deviceTokenId, ws, userId, hello, remoteAddr);
       deviceId = device.id;
       console.log(
         `[client] device registered: ${hello.displayName ?? hello.hostname} (${hello.os}/${hello.arch}) — agents=${
-          hello.agents?.map((a) => a.name).join(',') || 'none'
+          hello.agents.map((a) => a.name).join(',') || 'none'
         } [user=${userId}]`,
       );
       broadcastDevices(userId);
       return;
     }
+
+    // Post-hello: validate against the daemon→server union. Anything that
+    // doesn't match is dropped with a log line — a buggy or hostile
+    // daemon can't spoof `role: 'user'` to inject fake history, oversize
+    // a single text payload past the cap, or exfiltrate by stuffing
+    // dir-listing entries.
+    const msgResult = DaemonClientMessageSchema.safeParse(parsed);
+    if (!msgResult.success) {
+      console.warn(
+        `[client] rejected daemon message from device=${deviceId}: ${msgResult.error.message}`,
+      );
+      return;
+    }
+    const msg = msgResult.data;
+
+    if (!deviceId) return; // post-hello guarantees this, but TS doesn't know
+
     if (
-      deviceId &&
-      (msg.type === 'daemon_message' ||
-        msg.type === 'daemon_permission_request' ||
-        msg.type === 'daemon_done')
+      msg.type === 'daemon_message' ||
+      msg.type === 'daemon_permission_request' ||
+      msg.type === 'daemon_done'
     ) {
       devices.dispatchDaemonMessage(deviceId, msg as DaemonClientMessage);
+      return;
     }
+
     // Dir listings ride a separate per-request map rather than the
     // RemoteRunner dispatch; they're not tied to a session/runId.
-    if (deviceId && msg.type === 'daemon_dir_listing') {
+    if (msg.type === 'daemon_dir_listing') {
       const pending = pendingDirListings.get(msg.requestId);
       if (!pending) return;
       // Cross-tenant guard: a daemon may only resolve listings that were
@@ -378,7 +413,7 @@ clientWss.on('connection', (ws, req) => {
         requestId: msg.requestId,
         path: msg.path,
         parent: msg.parent,
-        entries: msg.entries ?? [],
+        entries: msg.entries,
         error: msg.error,
       });
     }

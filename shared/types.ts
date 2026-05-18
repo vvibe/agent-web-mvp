@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 export type AgentKind = 'claude' | 'codex';
 
 /** Claude model ids the UI offers and the server accepts. Anything outside
@@ -194,3 +196,94 @@ export type DaemonClientMessage =
       entries: DirEntry[];
       error?: string;
     };
+
+// ─── Runtime validation (M10 N-6) ────────────────────────────────────────────
+//
+// zod schemas for everything coming OFF the daemon WS. A user's own daemon
+// is partially trusted (it spawned from their machine) but its JSON shape
+// is currently trust-on-faith — a buggy or malicious daemon can spoof
+// `role: 'user'` to inject fake history rows, or send oversized payloads
+// past the message-level limit. Bounds below are picked well above legit
+// daemon traffic so a normal client never trips them.
+//
+// Hard-coded length caps rather than env-tunable: the new vvibe repo will
+// own its own protocol versioning; this repo's job is to land the contract
+// hardening before the daemon binary + WS shape ports over.
+
+const RUN_ID_MAX = 200;
+const REQUEST_ID_MAX = 200;
+const TEXT_MAX = 1 << 19; // ~512 KB per message text payload
+const TOOL_NAME_MAX = 200;
+const PATH_MAX = 4096;
+const TOKEN_MAX = 8192;
+const ERROR_MAX = 4096;
+const ENTRIES_MAX = 10_000;
+const ENTRY_NAME_MAX = 512;
+const HOSTNAME_MAX = 255;
+const SHORT_STR_MAX = 200;
+
+const ChatMessageRoleSchema = z.enum([
+  'user',
+  'assistant',
+  'system',
+  'tool_use',
+  'tool_result',
+]);
+
+const DirEntrySchema = z.object({
+  name: z.string().max(ENTRY_NAME_MAX),
+  isDir: z.boolean(),
+});
+
+export const DaemonClientMessageSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('daemon_message'),
+    runId: z.string().min(1).max(RUN_ID_MAX),
+    role: ChatMessageRoleSchema,
+    text: z.string().max(TEXT_MAX),
+    meta: z.record(z.string(), z.unknown()).optional(),
+  }),
+  z.object({
+    type: z.literal('daemon_permission_request'),
+    runId: z.string().min(1).max(RUN_ID_MAX),
+    requestId: z.string().min(1).max(REQUEST_ID_MAX),
+    toolName: z.string().min(1).max(TOOL_NAME_MAX),
+    input: z.unknown(),
+  }),
+  z.object({
+    type: z.literal('daemon_done'),
+    runId: z.string().min(1).max(RUN_ID_MAX),
+    resumeToken: z.string().max(TOKEN_MAX).optional(),
+    error: z.string().max(ERROR_MAX).optional(),
+  }),
+  z.object({
+    type: z.literal('daemon_dir_listing'),
+    requestId: z.string().min(1).max(REQUEST_ID_MAX),
+    path: z.string().max(PATH_MAX),
+    parent: z.string().max(PATH_MAX).optional(),
+    entries: z.array(DirEntrySchema).max(ENTRIES_MAX),
+    error: z.string().max(ERROR_MAX).optional(),
+  }),
+]);
+
+/** The daemon's first message on the /client WS. Not part of
+ *  DaemonClientMessage because it's a one-shot handshake, not a streamed
+ *  per-run event. Validated separately so the post-hello validator can
+ *  use a tighter discriminated union. */
+export const DeviceHelloMessageSchema = z.object({
+  type: z.literal('hello'),
+  hostname: z.string().min(1).max(HOSTNAME_MAX),
+  displayName: z.string().max(SHORT_STR_MAX).optional(),
+  os: z.string().min(1).max(SHORT_STR_MAX),
+  arch: z.string().min(1).max(SHORT_STR_MAX),
+  version: z.string().min(1).max(SHORT_STR_MAX),
+  agents: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(SHORT_STR_MAX),
+        path: z.string().max(PATH_MAX),
+      }),
+    )
+    .max(50),
+  pid: z.number().int().min(0),
+});
