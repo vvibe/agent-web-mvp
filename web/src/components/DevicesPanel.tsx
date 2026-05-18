@@ -1,25 +1,39 @@
+import { useState } from 'react';
 import type { DeviceInfo } from '../../../shared/types';
 
 interface Props {
   devices: DeviceInfo[];
 }
 
+function detectInstallCmd(): string {
+  const isWindows =
+    typeof navigator !== 'undefined' &&
+    /win/i.test(navigator.platform || navigator.userAgent);
+  return isWindows
+    ? 'iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex'
+    : 'curl -fsSL https://agent-web-mvp-renddi.fly.dev/install.sh | sh';
+}
+
+function InstallInstructions() {
+  return (
+    <>
+      <p className="muted">Run on the machine you want to connect:</p>
+      <pre className="install-cmd">{detectInstallCmd()}</pre>
+      <pre className="install-cmd">vvibe login{'\n'}vvibe install</pre>
+    </>
+  );
+}
+
 export function DevicesPanel({ devices }: Props) {
+  const [showAdd, setShowAdd] = useState(false);
+
   if (devices.length === 0) {
-    const isWindows =
-      typeof navigator !== 'undefined' &&
-      /win/i.test(navigator.platform || navigator.userAgent);
-    const installCmd = isWindows
-      ? 'iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex'
-      : 'curl -fsSL https://agent-web-mvp-renddi.fly.dev/install.sh | sh';
     return (
       <div className="devices-panel devices-empty">
         <div className="devices-header">
           <span className="dot dot-off" /> No device connected
         </div>
-        <p className="muted">Install vvibe on your machine, then pair it:</p>
-        <pre className="install-cmd">{installCmd}</pre>
-        <pre className="install-cmd">vvibe login{'\n'}vvibe install</pre>
+        <InstallInstructions />
       </div>
     );
   }
@@ -45,6 +59,19 @@ export function DevicesPanel({ devices }: Props) {
           );
         })}
       </ul>
+      <button
+        type="button"
+        className="add-device-toggle"
+        aria-expanded={showAdd}
+        onClick={() => setShowAdd((v) => !v)}
+      >
+        {showAdd ? '− Hide instructions' : '+ Connect new device'}
+      </button>
+      {showAdd && (
+        <div className="add-device-body">
+          <InstallInstructions />
+        </div>
+      )}
     </div>
   );
 }

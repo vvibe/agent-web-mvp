@@ -501,6 +501,32 @@ code {
   margin: 0 0 6px;
   font-size: 11px;
 }
+.add-device-toggle {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+.add-device-toggle:hover {
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-style: solid;
+}
+.add-device-body {
+  margin-top: 8px;
+}
+.add-device-body p {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
 .install-cmd {
   background: var(--bg);
   border: 1px solid var(--border);
