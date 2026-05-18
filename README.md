@@ -1,11 +1,18 @@
 # Agent Web MVP
 
-Single-user, self-hosted web UI for driving local AI coding agents
-(Claude Code, Codex CLI) from a browser.
+> **Experimental — superseded.** This repo validated the
+> embedded-agent-driving concept. The polished creator-facing product is
+> being built in a new repo `vvibe` (greenfield), targeting non-technical
+> creators with an in-dashboard agent driver. See
+> [ROADMAP.md](./ROADMAP.md) closeout notice for details on what carries
+> forward (the Go daemon + WS protocol) and what's deferred to the new
+> repo (server, web UI, M5–M11).
 
-This is **step 1** of a longer SaaS roadmap. Right now everything runs on one
-machine: the backend talks to local agent binaries, and the frontend connects
-to it over WebSocket on `localhost`.
+Self-hosted web UI for driving local AI coding agents (Claude Code, Codex
+CLI) from a browser. The original product framing — "step 1 of a longer
+SaaS roadmap" — was correct in direction but wrong in form: the long-form
+SaaS now lives in the new repo, while this repo's value distils to the
+daemon-and-protocol layer it proved out.
 
 ## Architecture
 
@@ -129,16 +136,6 @@ internet directly. Recommended:
 If you set `HOST=0.0.0.0`, anyone on the network can run code on your
 machine. Always pair that with one of the above.
 
-<!--
-  TODO(M11): the `agent-web-mvp-renddi.fly.dev` URLs below are the
-  maintainer's own hosted Fly instance and are hard-coded throughout this
-  section. Milestone 11 (Deployment portability) reworks this into a
-  generic "your hosted server URL" instruction once the multi-target
-  deploy recipes land. Don't add more Fly-specific URLs in the meantime —
-  parameterise instead. See ROADMAP.md → "Milestone 11 — Deployment
-  portability".
--->
-
 ## Installing the daemon on a new machine
 
 The hosted server only renders the UI; it can't see your filesystem. To
@@ -146,12 +143,9 @@ actually drive `claude` / `codex` against your code, install the
 **`vvibe`** daemon on each machine you want to drive from the web UI.
 
 One-line install from the hosted server (downloads a release tarball from
-GitHub, verifies sha256, drops the binary on PATH):
-
-> The URLs below point at the maintainer's hosted instance. If you're
-> running your own server, substitute its origin. Recipes for additional
-> deploy targets (CF Containers, Cloud Run, VPS) are tracked in
-> [ROADMAP.md](./ROADMAP.md) under Milestone 11.
+GitHub, verifies sha256, drops the binary on PATH). The URLs below point
+at the maintainer's hosted instance; if you're running your own server,
+substitute its origin.
 
 ```sh
 # macOS / Linux
