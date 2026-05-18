@@ -429,6 +429,93 @@ in adjacent milestones (e.g. cwd allowlist sits between this and M6).
 - **L-1 to L-6** Batched into a future "polish" cycle, not action-
   worthy on their own.
 
+### Milestone 11 — Deployment portability
+
+**Why:** today the only production-tested deployment is Fly.io (`fly.toml`,
+single 256 MB `nrt` machine). The `Dockerfile` is generic, but no other
+target has been validated end-to-end, the README hard-codes the Fly URL,
+and a prospective self-hoster who doesn't want to use Fly has to figure it
+out from scratch.
+
+A Workers + Durable Objects + D1 alternative was evaluated (May 2026) and
+consciously rejected: it would lock self-hosters onto Cloudflare and
+contradict the "self-hostable" claim that drove the project's open-source
+positioning in the first place. This milestone widens the set of "where
+can I run this?" answers along the *container-PaaS* axis while keeping
+the Fly path intact and not committing to any cloud-proprietary primitive.
+
+Orthogonal to **Milestone 9 (horizontal scale)** — each target still
+inherits the single-process `DeviceRegistry` constraint. This milestone
+is about more *places* to put one machine, not more *machines*.
+
+- **P0** **Validate `@anthropic-ai/claude-agent-sdk` on non-Fly runtimes.**
+  The server-local fallback path (anon dev mode in `server/agents/claude.ts`)
+  imports the SDK directly; the daemon bridge spawns it as a subprocess.
+  Confirm both paths work inside a vanilla `node:22-alpine` container
+  running on Cloud Run / Railway / a Hetzner VPS — no Fly-specific
+  assumptions about network, fs, or process model. Prerequisite for
+  everything below; if it doesn't work somewhere, that target gets
+  dropped early instead of late.
+
+- **P0** **Cloudflare Containers deployment recipe.** Same `Dockerfile`,
+  add the CF Containers config + `docs/deploy/cloudflare-containers.md`.
+  Verify: persistent volume equivalent for `/data/app.db`, long-lived
+  WS connection lifetime (no idle eviction), `PUBLIC_URL` / `ALLOWED_ORIGINS`
+  env wiring. If first-class persistent storage isn't available, document
+  the external-SQLite fallback (Turso / Tigris) rather than papering over.
+
+- **P0** **README "Deploy" section restructured.** From "deploy to Fly"
+  to a short matrix of validated targets with one-line trade-off blurbs
+  (idle cost, scale-to-zero, region, persistent storage). "Validated"
+  means there's a tested recipe in `docs/deploy/<target>.md`. Anything
+  not in the matrix stays out of the claim surface.
+
+- **P1** **Generic VPS / docker-compose recipe.** Target persona: Hetzner
+  / DigitalOcean / OCI Free Tier owner. `docs/deploy/vps.md` plus a
+  reference `docker-compose.yml`: Caddy fronts both `/ws` and `/client`
+  upgrades with auto-TLS, named volume for `/data`, `.env` template
+  driving `PUBLIC_URL` and the GitHub OAuth creds. This is the
+  deployment most aligned with the "true self-host" persona — the one
+  that justifies refusing the B route.
+
+- **P1** **Google Cloud Run recipe.** Only mainstream PaaS that
+  scale-to-zeros *and* supports WebSockets — biggest cost win for
+  low-traffic instances. Caveat: Cloud Run caps a single WS connection
+  at 60 minutes and then forces a reconnect. Validate that `client-go`
+  reconnect resumes cleanly and that an in-flight `runId` doesn't get
+  orphaned across the cap. If it does, surface it as M8 reliability
+  work and gate this recipe behind that fix.
+
+- **P1** **Railway / Render quickstart.** One-click GitHub-repo deploys
+  on both; mostly a matter of adding `railway.json` / `render.yaml`
+  and the corresponding "Deploy" buttons. Low effort but doesn't expand
+  the universe much — same shape as Fly, different vendor.
+
+- **P2** **Deploy buttons in the README** for everything in the validated
+  matrix. Low engineering cost, disproportionate perceived-credibility
+  cost when missing.
+
+- **P2** **Per-target cost & ops notes.** Short paragraph or table in
+  each `docs/deploy/<target>.md`: "For 1–20 users you'll pay ~$X/mo on
+  this target; egress matters above 100 GB/mo; for 100+ users see
+  M9 first." Stops users from picking the wrong target for their use
+  case.
+
+- **R**  **Single-binary server distribution.** Bundle Node +
+  `server/*.ts` into one statically-linked executable
+  (`pkg` / `nexe` / Bun `--compile`). Goal: `wget vvibe-server-linux-x64 &&
+  ./vvibe-server` on any VPS — no Docker, no Node toolchain. Mirrors
+  the daemon's GoReleaser story. Open questions: better-sqlite3's
+  native binding, the install-script-serving path, final image size.
+
+- **R**  **External-storage fallback for scale-to-zero targets.** If
+  Cloud Run scale-to-zero is to be more than "the volume keeps the
+  machine warm", `/data/app.db` needs an off-machine home. Evaluate
+  Turso (libSQL — drop-in for better-sqlite3 in many spots), Tigris,
+  or managed Postgres + drizzle/Kysely abstraction. Tracks closely
+  with M9's shared-state work — if the abstraction lands there, this
+  comes nearly for free.
+
 ---
 
 ## Cross-cutting follow-ups (caught during M1–M4 implementation)
