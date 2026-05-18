@@ -51,6 +51,11 @@ var runs = newRunManager()
 // runRelay maintains a long-lived WebSocket connection to the server with
 // exponential backoff. Returns only when ctx is cancelled.
 func runRelay(ctx context.Context, cfg *Config) {
+	// Windows-only: prepend user-scope Node / agent dirs so the LocalSystem
+	// service sees `claude` / `codex` / `node` even though SCM didn't hand
+	// it the user's PATH. No-op on other platforms.
+	augmentPATHForAgents()
+
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second
 
@@ -362,22 +367,13 @@ func findAgentInFallbackPaths(name string) string {
 }
 
 // latestNvmNodeBin returns ~/.nvm/versions/node/<latest>/bin, or "" if nvm
-// isn't installed or has no node versions. "latest" is alphabetical-last,
-// which is a good enough approximation for semver-style names like v20.11.0.
+// isn't installed or has no node versions. Picks the highest version under
+// numeric-aware comparison so v20.11.0 wins over v9.x.x (plain
+// lexicographic would pick v9 — '9' > '2' in ASCII).
 func latestNvmNodeBin(home string) string {
-	root := home + "/.nvm/versions/node"
-	entries, err := os.ReadDir(root)
-	if err != nil {
+	d := latestSubdir(home + "/.nvm/versions/node")
+	if d == "" {
 		return ""
 	}
-	var newest string
-	for _, e := range entries {
-		if e.IsDir() && e.Name() > newest {
-			newest = e.Name()
-		}
-	}
-	if newest == "" {
-		return ""
-	}
-	return root + "/" + newest + "/bin"
+	return d + "/bin"
 }
