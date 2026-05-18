@@ -195,6 +195,41 @@ file.
 If you want to build from source instead, see
 [`client-go/README.md`](./client-go/README.md).
 
+### Uninstalling
+
+`vvibe uninstall` removes the OS service but intentionally leaves the
+binary, config, log, and PATH edit in place — handy if you just want to
+stop auto-start without losing your pairing. To remove everything:
+
+**macOS**
+
+```sh
+vvibe uninstall                                       # 1. stop + remove service (skip if never `vvibe install`-ed)
+rm "$(command -v vvibe)"                              # 2. binary (sudo if it's in /usr/local/bin)
+rm -rf "$HOME/Library/Application Support/vvibe"     # 3. token, log, client.json
+# 4. open ~/.zshrc and delete this block (only present if installer added it):
+#       # vvibe (added by installer) — remove this block to undo
+#       export PATH="$HOME/.local/bin:$PATH"
+# 5. (optional) remove the now-orphaned device from the web UI's device list.
+```
+
+**Linux** — same as macOS, except step 3 is `rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/vvibe"`, and step 4's block lives in `~/.bashrc` (or fish's `config.fish`).
+
+**Windows (PowerShell)**
+
+```powershell
+vvibe uninstall                                       # admin PS; skip if never `vvibe install`-ed
+Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\Vvibe"   # binary
+Remove-Item -Recurse "$env:APPDATA\vvibe"                 # token, log, client.json
+# Remove from User PATH:
+$p = [Environment]::GetEnvironmentVariable('Path','User') -split ';' |
+     Where-Object { $_ -ne "$env:LOCALAPPDATA\Programs\Vvibe" }
+[Environment]::SetEnvironmentVariable('Path', ($p -join ';'), 'User')
+```
+
+The server still has a record of the paired device until you remove it
+from the web UI's device list; otherwise it just shows offline forever.
+
 ## Known limitations (this MVP)
 
 - Codex sessions are stateless per prompt (no chat memory). Codex is
