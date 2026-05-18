@@ -78,6 +78,17 @@ export class Session {
   // Set briefly while cancel() is in flight so onError can distinguish a
   // user-initiated abort (= idle) from a real runtime failure (= error).
   private cancelling = false;
+  // The prompt currently in flight with the runner. Kept so the stale-
+  // resume auto-recovery path can re-run it as a fresh conversation
+  // without asking the user to retype. Cleared on done.
+  private inFlightPrompt: string | null = null;
+  // True once we've already auto-recovered from a stale Claude resume
+  // token for *this* turn. Prevents an infinite loop if the retry also
+  // fails (which would mean it's not a stale-token problem after all).
+  // Reset when the runner reports a fresh resume token, so a session
+  // that recovered once and ran successfully can still recover again
+  // weeks later if the daemon machine is wiped a second time.
+  private staleResumeRetried = false;
 
   constructor(
     opts: {
@@ -115,6 +126,38 @@ export class Session {
           this.recordMessage({ role: 'system', text: 'Cancelled.' });
           return;
         }
+        // Stale resume token recovery. Claude Code stores conversation
+        // history locally on the daemon machine (~/.claude/projects/…)
+        // and refuses to resume an ID that isn't there anymore. We see
+        // this whenever the daemon machine got wiped, the user paired a
+        // different machine, or Claude Code's local store was cleared.
+        // Re-running the same prompt without a resume token starts a
+        // fresh conversation — the user keeps working, just without the
+        // earlier turns in context. Cheaper than making them re-create
+        // the session, and the friendly system message tells them
+        // exactly why their context just reset.
+        if (
+          !this.staleResumeRetried &&
+          this.inFlightPrompt !== null &&
+          isStaleResumeError(err.message)
+        ) {
+          this.staleResumeRetried = true;
+          this.resumeToken = undefined;
+          stmts.updateAgentSessionResumeToken.run(null, this.id);
+          this.recordMessage({
+            role: 'system',
+            text: "Claude couldn't find this conversation on this device anymore. Re-running your last prompt from scratch — earlier messages above are kept for your reference but won't be in Claude's context.",
+          });
+          const replay = this.inFlightPrompt;
+          this.inFlightPrompt = null;
+          this.busy = false;
+          // Front of queue so it runs before any other queued prompt.
+          // enqueuePrompt would re-record the user message in history,
+          // which we don't want — the original user bubble is still there.
+          this.queue.unshift(replay);
+          this.drainQueue();
+          return;
+        }
         this.setStatus('error');
         this.events.onError(this.id, err.message);
         this.recordMessage({ role: 'system', text: `Error: ${err.message}` });
@@ -123,9 +166,14 @@ export class Session {
         if (this.status !== 'error') this.setStatus('idle');
         this.busy = false;
         this.cancelling = false;
+        this.inFlightPrompt = null;
         this.drainQueue();
       },
       onResumeToken: (token) => {
+        // A fresh token means the runner is happy again; future stale
+        // errors (e.g. machine wiped a second time months from now)
+        // should still be eligible for one round of auto-recovery.
+        this.staleResumeRetried = false;
         if (token === this.resumeToken) return;
         this.resumeToken = token;
         stmts.updateAgentSessionResumeToken.run(token, this.id);
@@ -184,6 +232,9 @@ export class Session {
     if (!next) return;
     this.busy = true;
     this.setStatus('running');
+    // Keep the prompt around so onError can replay it without making
+    // the user retype if Claude rejects a stale resume token.
+    this.inFlightPrompt = next;
     await this.runner.send(next, this.resumeToken);
   }
 
@@ -225,6 +276,21 @@ export class Session {
     this.status = s;
     this.events.onMeta(this);
   }
+}
+
+// isStaleResumeError matches the SDK error that Claude Code emits when
+// the daemon asks it to resume a session ID that no longer exists in
+// the local ~/.claude/projects/ store. Surfaced verbatim through the
+// claude-bridge as e.g. "Claude Code returned an error result: No
+// conversation found with session ID: 9bda7a69-...".
+//
+// Matching on the human-readable substring is fragile vs. SDK upgrades
+// but there is no error code on the wire today, and the SDK message
+// is fairly stable. If this breaks, the failure mode is graceful: we
+// fall through to the regular error path and the user sees the literal
+// error — no worse than before this fix.
+function isStaleResumeError(message: string): boolean {
+  return /no conversation found with session id/i.test(message);
 }
 
 function defaultTitle(agent: AgentKind, cwd: string): string {
