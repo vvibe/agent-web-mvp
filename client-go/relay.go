@@ -299,14 +299,85 @@ func handleRunPrompt(s *wsSender, msg map[string]any) {
 	}()
 }
 
-// detectAgents reports which supported CLIs are on PATH. This is what the
-// server cares about for showing capabilities in the UI.
+// detectAgents reports which supported CLIs are reachable from the daemon.
+//
+// First we try $PATH (where the user installed `claude` / `codex`), then
+// fall back to a curated list of common per-user install locations. The
+// fallback matters because on macOS the daemon runs under launchd, whose
+// process PATH is just `/usr/bin:/bin:/usr/sbin:/sbin` — the user's npm
+// globals (~/.npm-global/bin, ~/.nvm/versions/node/<v>/bin) and Homebrew
+// (/opt/homebrew/bin, /usr/local/bin) are not inherited from the shell.
+// Without the fallback the UI shows "0 agents" right after install even
+// though the installer's own shell saw both CLIs.
+//
+// Returns an initialised empty slice (never nil) so the JSON wire form is
+// `[]` rather than `null` — the browser DevicesPanel reads `.length` and
+// must not crash when no agents are found.
 func detectAgents() []map[string]string {
-	var out []map[string]string
+	out := []map[string]string{}
 	for _, name := range []string{"claude", "codex"} {
 		if p, err := exec.LookPath(name); err == nil {
+			out = append(out, map[string]string{"name": name, "path": p})
+			continue
+		}
+		if p := findAgentInFallbackPaths(name); p != "" {
 			out = append(out, map[string]string{"name": name, "path": p})
 		}
 	}
 	return out
+}
+
+// findAgentInFallbackPaths searches common per-user install locations for an
+// agent CLI that wasn't found on $PATH. Returns "" if not found.
+//
+// Order matters: prefer the user's own installs (~/.npm-global, nvm's active
+// version, ~/.local) over system-wide locations (Homebrew, /usr/local). nvm
+// is special-cased because each Node version lives at a different path and
+// the user is unlikely to have only one — we pick the alphabetically last
+// directory under ~/.nvm/versions/node/, which approximates "newest Node".
+func findAgentInFallbackPaths(name string) string {
+	home, _ := os.UserHomeDir()
+
+	candidates := []string{}
+	if home != "" {
+		candidates = append(candidates,
+			home+"/.npm-global/bin/"+name,
+			home+"/.local/bin/"+name,
+		)
+		if nvmBin := latestNvmNodeBin(home); nvmBin != "" {
+			candidates = append(candidates, nvmBin+"/"+name)
+		}
+	}
+	candidates = append(candidates,
+		"/opt/homebrew/bin/"+name, // Apple Silicon brew
+		"/usr/local/bin/"+name,    // Intel brew + generic Unix
+	)
+
+	for _, p := range candidates {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+			return p
+		}
+	}
+	return ""
+}
+
+// latestNvmNodeBin returns ~/.nvm/versions/node/<latest>/bin, or "" if nvm
+// isn't installed or has no node versions. "latest" is alphabetical-last,
+// which is a good enough approximation for semver-style names like v20.11.0.
+func latestNvmNodeBin(home string) string {
+	root := home + "/.nvm/versions/node"
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	var newest string
+	for _, e := range entries {
+		if e.IsDir() && e.Name() > newest {
+			newest = e.Name()
+		}
+	}
+	if newest == "" {
+		return ""
+	}
+	return root + "/" + newest + "/bin"
 }

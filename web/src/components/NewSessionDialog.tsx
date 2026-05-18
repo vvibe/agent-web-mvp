@@ -39,7 +39,7 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
   // connected daemons since RemoteRunner is free to pick at send() time.
   const agentsAvailable = useMemo(() => {
     const relevant = deviceId ? devices.filter((d) => d.id === deviceId) : devices;
-    return new Set(relevant.flatMap((d) => d.agents.map((a) => a.name)));
+    return new Set(relevant.flatMap((d) => (d.agents ?? []).map((a) => a.name)));
   }, [deviceId, devices]);
 
   // When the selected agent becomes unavailable (e.g. user switched device in
@@ -114,14 +114,17 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
               Device
               <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)}>
                 <option value="">Any (first connected)</option>
-                {devices.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {(d.displayName ?? d.hostname)} — {d.os}/{d.arch}
-                    {d.agents.length > 0
-                      ? ` · ${d.agents.map((a) => a.name).join(',')}`
-                      : ' · no agents'}
-                  </option>
-                ))}
+                {devices.map((d) => {
+                  const agents = d.agents ?? [];
+                  return (
+                    <option key={d.id} value={d.id}>
+                      {(d.displayName ?? d.hostname)} — {d.os}/{d.arch}
+                      {agents.length > 0
+                        ? ` · ${agents.map((a) => a.name).join(',')}`
+                        : ' · no agents'}
+                    </option>
+                  );
+                })}
               </select>
             </label>
           )}

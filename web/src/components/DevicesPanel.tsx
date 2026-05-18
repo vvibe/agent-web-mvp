@@ -29,15 +29,21 @@ export function DevicesPanel({ devices }: Props) {
         <span className="dot dot-on" /> {devices.length} device{devices.length === 1 ? '' : 's'}
       </div>
       <ul className="devices-list">
-        {devices.map((d) => (
-          <li key={d.id} title={`${d.hostname} • ${d.os}/${d.arch} • v${d.version}`}>
-            <span className="device-name">{d.displayName ?? d.hostname}</span>
-            <span className="device-meta">
-              {d.os}/{d.arch}
-              {d.agents.length > 0 ? ` · ${d.agents.map((a) => a.name).join(',')}` : ' · no agents'}
-            </span>
-          </li>
-        ))}
+        {devices.map((d) => {
+          // `agents` may arrive as null when the daemon detected zero CLIs —
+          // Go's encoding/json serialises a nil slice as `null`, not `[]`.
+          // Treat both as the no-agents case rather than crashing the panel.
+          const agents = d.agents ?? [];
+          return (
+            <li key={d.id} title={`${d.hostname} • ${d.os}/${d.arch} • v${d.version}`}>
+              <span className="device-name">{d.displayName ?? d.hostname}</span>
+              <span className="device-meta">
+                {d.os}/{d.arch}
+                {agents.length > 0 ? ` · ${agents.map((a) => a.name).join(',')}` : ' · no agents'}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
