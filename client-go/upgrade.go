@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/creativeprojects/go-selfupdate"
 	"github.com/kardianos/service"
 )
@@ -89,13 +90,18 @@ Flags:
 		return
 	}
 
-	// `version` is the ldflag-injected current version. When built locally
-	// without ldflags it is "dev", which compares as less than any real
-	// release; that's actually what we want for testing snapshot builds.
+	// `version` is the ldflag-injected current version. GoReleaser builds
+	// set it to "v0.1.x"; `go build` without ldflags leaves it as "dev",
+	// which is not a valid semver — release.LessOrEqual would feed it to
+	// Masterminds/semver.MustParse and panic. Pre-parse with the
+	// non-panicking NewVersion; on failure, treat the binary as older than
+	// any real release so dev builds can always pull the latest.
 	current := version
 	fmt.Printf("Current: %s\nLatest:  %s\n", current, release.Version())
 
-	if release.LessOrEqual(current) {
+	if _, err := semver.NewVersion(current); err != nil {
+		fmt.Printf("\n(current version %q is not semver — treating as a dev build, will upgrade)\n", current)
+	} else if release.LessOrEqual(current) {
 		fmt.Println("\nAlready on the latest version.")
 		return
 	}
