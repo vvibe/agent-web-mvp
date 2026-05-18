@@ -490,7 +490,27 @@ code {
   flex-direction: column;
   gap: 2px;
 }
+.device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
 .device-name { font-weight: 500; }
+.device-disconnect {
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.devices-list li:hover .device-disconnect { opacity: 1; }
+.device-disconnect:hover { color: var(--red); }
 .device-meta {
   color: var(--text-dim);
   font-size: 11px;

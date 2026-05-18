@@ -91,6 +91,26 @@ export class DeviceRegistry {
   }
 
   /**
+   * Force-close a connected daemon's WS and drop it from the registry. Used
+   * when the user revokes a device token — without closing the socket, the
+   * already-authenticated daemon would keep streaming until its next ping
+   * fails. Caller is expected to have already deleted the device_tokens row
+   * so the daemon's auto-reconnect 401s.
+   */
+  terminate(id: string, reason = 'device revoked'): boolean {
+    const d = this.devices.get(id);
+    if (!d) return false;
+    try {
+      d.ws.close(4002, reason);
+    } catch {
+      /* ignore */
+    }
+    this.devices.delete(id);
+    this.notify();
+    return true;
+  }
+
+  /**
    * Remove a device from the registry. Pass `ws` when called from a close
    * handler so we don't unregister a *newer* connection that replaced us in
    * register(): the prior ws's close fires after the eviction and would

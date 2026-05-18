@@ -261,6 +261,12 @@ export const stmts = {
   touchDeviceToken: db.prepare<[number, string]>(`
     UPDATE device_tokens SET last_seen_at = ? WHERE id = ?
   `),
+  // user_id is part of the WHERE so a caller can't revoke another user's
+  // device just by guessing its id. Returns `changes: 0` on miss; the route
+  // handler treats that as 404.
+  deleteDeviceTokenForUser: db.prepare<[string, string]>(`
+    DELETE FROM device_tokens WHERE id = ? AND user_id = ?
+  `),
 
   // Agent sessions ─────────────────────────────────────────────────────────
   insertAgentSession: db.prepare<[string, string, string, string, string, string | null, string | null, number]>(`

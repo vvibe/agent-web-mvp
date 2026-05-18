@@ -214,6 +214,25 @@ app.post('/api/device/pair-init', pairInitLimiter, pairInit);
 app.get('/api/device/pair-status', pairStatusLimiter, pairStatus);
 app.get('/api/device/pair-lookup', requireAuth as any, pairLookup as any);
 app.post('/api/device/pair-approve', requireAuth as any, pairApprove as any);
+app.delete('/api/device/:id', requireAuth as any, ((req: any, res: any) => {
+  const id = String(req.params.id ?? '');
+  const userId = req.user.id as string;
+  if (!id) {
+    res.status(400).json({ error: 'missing id' });
+    return;
+  }
+  const r = stmts.deleteDeviceTokenForUser.run(id, userId);
+  if (r.changes === 0) {
+    // Either id is bogus or it belongs to another user. Don't distinguish:
+    // disclosing "exists but not yours" lets a logged-in user probe for
+    // valid device ids across the whole table.
+    res.status(404).json({ error: 'device not found' });
+    return;
+  }
+  devices.terminate(id);
+  broadcastDevices(userId);
+  res.status(204).end();
+}) as any);
 
 // SPA fallback: any non-API GET serves index.html so client-side routing
 // (e.g. /pair?code=...) works on hard refresh.

@@ -48,9 +48,33 @@ export function DevicesPanel({ devices }: Props) {
           // Go's encoding/json serialises a nil slice as `null`, not `[]`.
           // Treat both as the no-agents case rather than crashing the panel.
           const agents = d.agents ?? [];
+          const label = d.displayName ?? d.hostname;
           return (
             <li key={d.id} title={`${d.hostname} • ${d.os}/${d.arch} • v${d.version}`}>
-              <span className="device-name">{d.displayName ?? d.hostname}</span>
+              <div className="device-row">
+                <span className="device-name">{label}</span>
+                <button
+                  type="button"
+                  className="device-disconnect"
+                  title={`Disconnect ${label} — revokes the token; this machine will need to re-pair (vvibe login).`}
+                  onClick={async () => {
+                    if (!confirm(
+                      `Disconnect "${label}"?\n\nThis revokes its token. To use this machine again you'll have to run \`vvibe login\` on it.`,
+                    )) return;
+                    const r = await fetch(`/api/device/${encodeURIComponent(d.id)}`, {
+                      method: 'DELETE',
+                      credentials: 'same-origin',
+                    });
+                    if (!r.ok && r.status !== 204) {
+                      alert(`Failed to disconnect: HTTP ${r.status}`);
+                    }
+                    // Success path: the server broadcasts an updated devices
+                    // list over WS, so we don't touch local state here.
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
               <span className="device-meta">
                 {d.os}/{d.arch}
                 {agents.length > 0 ? ` · ${agents.map((a) => a.name).join(',')}` : ' · no agents'}
