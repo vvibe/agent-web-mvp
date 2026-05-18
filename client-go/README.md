@@ -133,7 +133,7 @@ Uninstall:
 
 | Platform | Config | Logs |
 |---|---|---|
-| Windows | `%AppData%\vvibe\client.json` | `%AppData%\vvibe\client.log` |
+| Windows | `%ProgramData%\vvibe\client.json` | `%ProgramData%\vvibe\client.log` |
 | macOS   | `~/Library/Application Support/vvibe/client.json` | …`/client.log` |
 | Linux   | `~/.config/vvibe/client.json` | `~/.config/vvibe/client.log` |
 
