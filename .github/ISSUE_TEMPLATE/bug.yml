@@ -1,0 +1,68 @@
+name: Bug report
+description: Something's broken — the device isn't showing up, an agent won't run, install failed, etc.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug.
+
+        **Before opening:** run `vvibe doctor` on the affected machine and
+        paste the output below. That single command captures almost everything
+        we'd otherwise need to ask for in back-and-forth comments (config,
+        service state, PATH discovery, Claude SDK location, server reachability,
+        recent log).
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `vvibe doctor`
+      description: |
+        Copy everything between the `=== vvibe doctor ===` and the trailing `===` line.
+        Tokens are auto-masked. Paths and hostname are not — scrub manually if they
+        contain anything you don't want public.
+      placeholder: |
+        === vvibe doctor ====================================================
+        Generated: …
+        …
+        =====================================================================
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: e.g. "RENDDI-HOME should appear in the web UI with claude + codex listed."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened?
+      placeholder: e.g. "Web UI shows 'no agent CLI on PATH' even though `claude --version` works in my shell."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Install Node.js via …
+        2. `iwr https://agent-web-mvp-renddi.fly.dev/install.ps1 | iex`
+        3. `vvibe install`
+        4. Open https://agent-web-mvp-renddi.fly.dev → …
+    validations:
+      required: false
+
+  - type: input
+    id: vvibe-version
+    attributes:
+      label: vvibe version
+      description: Output of `vvibe version` (or "dev" for a local build).
+      placeholder: e.g. v0.1.10
+    validations:
+      required: false

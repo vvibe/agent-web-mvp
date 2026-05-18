@@ -67,6 +67,8 @@ func main() {
 		runShowConfig()
 	case "sdk":
 		runSdkInstall()
+	case "doctor":
+		runDoctor()
 	case "version":
 		fmt.Printf("vvibe %s (commit %s, built %s)\n", version, commit, date)
 	case "help", "-h", "--help":
@@ -106,6 +108,9 @@ Commands:
                      bridge so Claude sessions can resolve it. Runs
                      implicitly during 'install'; rerun manually if it
                      failed (e.g. you didn't have npm yet).
+  doctor             Print a diagnostic report (config, agents on PATH,
+                     SDK, server reachability, recent log). Paste it
+                     into a GitHub issue when filing a bug.
   upgrade [--check]  Download and install the latest release from GitHub
                      (stops + restarts the service around the swap).
   version            Print version.

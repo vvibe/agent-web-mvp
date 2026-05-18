@@ -384,7 +384,9 @@ else
   printf '  2. Register as a service (auto-start on boot):\n'
 fi
 printf '       vvibe install\n'
-printf '       vvibe status\n'
+printf '       vvibe status\n\n'
+printf 'If anything looks wrong:\n'
+printf '       vvibe doctor    # prints a diagnostic report; paste it into a bug report\n'
 
 # If the installer just appended to a shell rc, the user's current terminal
 # can't see vvibe yet — only new shells will. The post-install commands

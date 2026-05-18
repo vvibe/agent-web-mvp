@@ -83,7 +83,9 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
         {noAgentsOnDevice && (
           <p className="warning">
             {scopeLabel} has no agent CLI on PATH. Install <code>claude</code>{' '}
-            or <code>codex</code> on that machine, then restart vvibe.
+            or <code>codex</code> on that machine, then restart vvibe. If you{' '}
+            <em>did</em> install one, run <code>vvibe doctor</code> on that
+            machine — it'll show what the daemon actually sees.
           </p>
         )}
         <form onSubmit={submit}>

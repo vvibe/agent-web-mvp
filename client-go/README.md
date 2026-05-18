@@ -127,6 +127,8 @@ Uninstall:
 | `login [--token=X --server=URL]` | Device-code pairing, or persist a pre-existing token directly |
 | `upgrade [--check] [--yes]` | Self-update from GitHub Releases (sha256-verified, restarts service) |
 | `show-config` | Print config path + current values |
+| `sdk` | Install `@anthropic-ai/claude-agent-sdk` next to the bridge (also runs during `install`) |
+| `doctor` | Print a diagnostic report — paste it when filing a bug |
 | `version` | Print version (built with `-X main.version=…` ldflags) |
 
 ## Config & log paths
@@ -136,6 +138,22 @@ Uninstall:
 | Windows | `%ProgramData%\vvibe\client.json` | `%ProgramData%\vvibe\client.log` |
 | macOS   | `~/Library/Application Support/vvibe/client.json` | …`/client.log` |
 | Linux   | `~/.config/vvibe/client.json` | `~/.config/vvibe/client.log` |
+
+## Troubleshooting
+
+`vvibe doctor` is the first thing to try when anything looks off — it prints
+the daemon's full view of the world (config path, agents found on PATH, SDK
+location, server reachability, recent log) and flags problems with `[!!]`.
+
+```
+vvibe doctor
+```
+
+If the report doesn't make the cause obvious, copy the entire `=== vvibe
+doctor === ... ===` block into a [new GitHub issue][issues] — the template
+asks for it on the first field.
+
+[issues]: https://github.com/vvibe/agent-web-mvp/issues/new?template=bug.yml
 
 ## Verifying after a reboot
 
