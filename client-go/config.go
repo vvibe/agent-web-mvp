@@ -28,6 +28,15 @@ type Config struct {
 	// the resolution + match semantics; managed via the `vvibe allow`
 	// / `vvibe deny` / `vvibe allowed` CLI commands.
 	AllowedCwds []string `json:"allowed_cwds,omitempty"`
+	// AgentBinDirs is a snapshot of directories that contained `claude`
+	// or `codex` (or `node`) when the interactive user ran `vvibe
+	// install`. The daemon prepends them to its own PATH at startup so
+	// the LocalSystem service can resolve agent CLIs that live under the
+	// interactive user's profile (e.g. C:\Users\X\.local\bin from the
+	// claude native installer, or a Node-version-manager prefix that
+	// the heuristic dir-scanner missed). Best-effort: empty on
+	// non-Windows or when no agent CLI was reachable at install time.
+	AgentBinDirs []string `json:"agent_bin_dirs,omitempty"`
 }
 
 // appDir returns the directory that holds client.json and client.log.

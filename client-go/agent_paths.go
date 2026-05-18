@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -23,7 +25,13 @@ func augmentPATHForAgents() {
 	if runtime.GOOS != "windows" {
 		return
 	}
-	dirs := discoverWindowsAgentDirs()
+	// Snapshot from `vvibe install` runs first: these are dirs that
+	// actually held a working `claude` / `codex` / `node` when the
+	// interactive user ran install. Heuristic discovery comes second as
+	// a fallback for fresh installs that pre-date the snapshot field, or
+	// for binaries added after install.
+	dirs := loadSnapshotAgentBinDirs()
+	dirs = append(dirs, discoverWindowsAgentDirs()...)
 	if len(dirs) == 0 {
 		return
 	}
@@ -48,6 +56,74 @@ func augmentPATHForAgents() {
 		len(add), strings.Join(add, " ; "))
 }
 
+// snapshotAgentBinDirs records the directories that contain working
+// `claude` / `codex` / `node` on the *current* process's PATH and writes
+// them into client.json. Called from `vvibe install` (interactive user
+// context) so the daemon later has authoritative locations even when
+// they're outside the heuristic scanner's coverage (e.g. claude's native
+// installer drops claude.exe under %USERPROFILE%\.local\bin, which no
+// node-version-manager knows about).
+//
+// Best-effort: any individual step that fails is logged and skipped —
+// install must succeed even when no agent CLI is reachable yet.
+func snapshotAgentBinDirs() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	seen := map[string]struct{}{}
+	var dirs []string
+	for _, name := range []string{"claude", "codex", "node"} {
+		p, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		d := filepath.Dir(p)
+		key := strings.ToLower(d)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		dirs = append(dirs, d)
+	}
+
+	cfg, err := loadConfig()
+	if err != nil || cfg == nil {
+		// Don't refuse install just because config can't be read.
+		// loadConfig returns a default when the file is missing,
+		// so a real error here means a parse failure — surface it
+		// to the user but keep going.
+		if err != nil {
+			log.Printf("snapshot: skip (config load failed: %v)", err)
+		}
+		return
+	}
+	// Re-running install should refresh the snapshot, not append. The
+	// user may have reinstalled claude in a different location since
+	// the previous install and the stale dir is unhelpful.
+	cfg.AgentBinDirs = dirs
+	if err := saveConfig(cfg); err != nil {
+		log.Printf("snapshot: skip (config save failed: %v)", err)
+		return
+	}
+	if len(dirs) == 0 {
+		fmt.Println("note: no claude/codex/node found on PATH yet — install one, then re-run `vvibe install` to refresh the snapshot.")
+	} else {
+		fmt.Printf("snapshot: recorded %d agent bin dir(s) for the service to inherit.\n", len(dirs))
+	}
+}
+
+// loadSnapshotAgentBinDirs reads Config.AgentBinDirs without exposing
+// the rest of the config to augmentPATHForAgents (which has no need
+// for tokens / server URL). Errors are swallowed: a missing or
+// corrupt config falls back to heuristic discovery.
+func loadSnapshotAgentBinDirs() []string {
+	cfg, err := loadConfig()
+	if err != nil || cfg == nil {
+		return nil
+	}
+	return cfg.AgentBinDirs
+}
+
 // discoverWindowsAgentDirs enumerates likely install locations of node /
 // claude / codex across every real user profile on this machine plus the
 // well-known system-wide nodejs locations. Returns only directories that
@@ -59,9 +135,10 @@ func discoverWindowsAgentDirs() []string {
 	for _, userHome := range enumerateWindowsUserHomes() {
 		appData := filepath.Join(userHome, "AppData")
 		candidates = append(candidates,
-			filepath.Join(appData, "Roaming", "npm"),         // npm global (default)
+			filepath.Join(appData, "Roaming", "npm"),          // npm global (default)
 			filepath.Join(appData, "Local", "nvs", "default"), // nvs active link
 			filepath.Join(appData, "Local", "Volta", "bin"),   // Volta
+			filepath.Join(userHome, ".local", "bin"),          // anthropic claude.exe native installer
 			filepath.Join(userHome, "scoop", "shims"),         // Scoop user install
 			filepath.Join(userHome, "scoop", "apps", "nodejs", "current"),
 		)

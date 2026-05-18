@@ -115,6 +115,14 @@ func runInstall(args []string) {
 		fmt.Println("installed.")
 	}
 
+	// Snapshot where the interactive user's `claude` / `codex` / `node`
+	// actually live. The dirs go into client.json and the daemon prepends
+	// them to its own PATH at startup — the heuristic Windows scanner
+	// in agent_paths.go can't enumerate every node-version-manager or
+	// native-installer layout, so trusting `exec.LookPath` from the
+	// user's process is strictly better than guessing.
+	snapshotAgentBinDirs()
+
 	// Bridge needs @anthropic-ai/claude-agent-sdk reachable. Install it now
 	// while we have the interactive user's npm; the LocalSystem service that
 	// runs later can only *read* node_modules, not provision it.

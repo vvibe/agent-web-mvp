@@ -211,7 +211,12 @@ if ($missingTools.Count -gt 0) {
       $reply = Read-Host "Install $tool via 'npm install -g $pkg'? [y/N]"
       if ($reply -match '^[Yy]') {
         Write-Step "Installing $pkg"
-        & npm install -g $pkg
+        # Route through cmd.exe instead of `& npm`. PowerShell's call operator
+        # resolves `npm` to npm.ps1 on most Node installs, whose $args handling
+        # has been observed to drop characters (e.g. user reported npm seeing
+        # "pm" as the subcommand). cmd.exe finds npm.cmd directly and passes
+        # args verbatim, so the package name reaches npm unmangled.
+        & cmd.exe /c "npm install -g $pkg"
         if ($LASTEXITCODE -ne 0) {
           Write-Warn "npm install -g $pkg failed (exit $LASTEXITCODE). Install manually before pairing."
         }
