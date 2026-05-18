@@ -205,6 +205,54 @@ const pairStatusLimiter = rateLimit({
   message: { error: 'Too many pair-status polls; slow down.' },
 });
 
+// ─── WS rate limiting (M10 B-5) ──────────────────────────────────────────────
+//
+// HTTP endpoints get express-rate-limit; the browser /ws send_prompt path
+// had no equivalent. Per-(userId, sessionId) token bucket: 10 prompts of
+// burst capacity, refilling at 10/min. Picks legit user pace (a few
+// prompts a minute) without tripping; well below what a runaway script
+// would generate. Server-side gate independent of any frontend throttling.
+const PROMPT_BUCKET_CAPACITY = 10;
+const PROMPT_BUCKET_REFILL_PER_SEC = 10 / 60; // 10 prompts/min sustained
+
+class TokenBucket {
+  private tokens: number;
+  private lastRefill: number;
+  constructor(
+    private readonly capacity: number,
+    private readonly refillPerSec: number,
+  ) {
+    this.tokens = capacity;
+    this.lastRefill = Date.now();
+  }
+  /** Returns true and decrements if a token is available; false if rate-limited. */
+  consume(): boolean {
+    const now = Date.now();
+    const elapsed = (now - this.lastRefill) / 1000;
+    this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.refillPerSec);
+    this.lastRefill = now;
+    if (this.tokens >= 1) {
+      this.tokens -= 1;
+      return true;
+    }
+    return false;
+  }
+}
+
+const promptBuckets = new Map<string, TokenBucket>();
+function checkPromptRate(userId: string, sessionId: string): boolean {
+  const key = `${userId}:${sessionId}`;
+  let b = promptBuckets.get(key);
+  if (!b) {
+    b = new TokenBucket(PROMPT_BUCKET_CAPACITY, PROMPT_BUCKET_REFILL_PER_SEC);
+    promptBuckets.set(key, b);
+  }
+  return b.consume();
+}
+function dropPromptBucket(userId: string, sessionId: string): void {
+  promptBuckets.delete(`${userId}:${sessionId}`);
+}
+
 // GitHub OAuth
 app.get('/auth/github', authLimiter, startOAuthLogin);
 app.get('/auth/github/callback', authLimiter, handleOAuthCallback);
@@ -679,6 +727,14 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
     case 'send_prompt': {
       const s = mustSession(ws, userId, msg.sessionId);
       if (!s) return;
+      if (!checkPromptRate(userId, msg.sessionId)) {
+        send(ws, {
+          type: 'error',
+          sessionId: msg.sessionId,
+          error: 'Too many prompts on this session; slow down (10/min).',
+        });
+        return;
+      }
       s.enqueuePrompt(msg.prompt);
       return;
     }
@@ -714,6 +770,7 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
       const s = store.getForUser(msg.sessionId, userId);
       if (!s) return;
       if (store.delete(msg.sessionId)) {
+        dropPromptBucket(userId, msg.sessionId);
         broadcastToUser(userId, { type: 'session_deleted', sessionId: msg.sessionId });
       }
       return;
