@@ -21,6 +21,13 @@ type Config struct {
 	Server      string `json:"server"`
 	Token       string `json:"token"`
 	DisplayName string `json:"display_name,omitempty"`
+	// AllowedCwds is the union of filesystem roots an incoming
+	// daemon_run_prompt is permitted to target. Empty means "no
+	// restriction" for backwards compatibility — the daemon logs a
+	// warning at startup so the operator notices. See allowlist.go for
+	// the resolution + match semantics; managed via the `vvibe allow`
+	// / `vvibe deny` / `vvibe allowed` CLI commands.
+	AllowedCwds []string `json:"allowed_cwds,omitempty"`
 }
 
 // appDir returns the directory that holds client.json and client.log.

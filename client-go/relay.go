@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -55,6 +56,15 @@ func runRelay(ctx context.Context, cfg *Config) {
 	// service sees `claude` / `codex` / `node` even though SCM didn't hand
 	// it the user's PATH. No-op on other platforms.
 	augmentPATHForAgents()
+
+	// One-shot startup warning if the cwd allowlist is empty. Back-compat
+	// for existing daemons (refusing every prompt at upgrade time would be
+	// a hostile surprise), but the operator should add `vvibe allow <path>`
+	// before exposing the web UI beyond themselves.
+	if len(cfg.AllowedCwds) == 0 {
+		log.Printf("[allowlist] no cwd allowlist set — any cwd from the server will be accepted. " +
+			"Add roots with `vvibe allow <path>` to gate sessions.")
+	}
 
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second
@@ -234,6 +244,25 @@ func handleRunPrompt(s *wsSender, msg map[string]any) {
 	resume, _ := msg["resumeToken"].(string)
 	model, _ := msg["model"].(string)
 	if runId == "" {
+		return
+	}
+
+	// cwd allowlist gate (M10 H-3). Re-loads config per run so `vvibe allow
+	// <path>` takes effect without a daemon restart. A failed config read
+	// is treated as "no allowlist" — refusing every run on a transient
+	// disk hiccup would be worse than the marginal weakening.
+	if cfg, err := loadConfig(); err == nil && !isCwdAllowed(cwd, cfg.AllowedCwds) {
+		log.Printf("run %s refused: cwd %q not in allowlist (%d allowed roots)", runId, cwd, len(cfg.AllowedCwds))
+		_ = s.send(map[string]any{
+			"type":  "daemon_done",
+			"runId": runId,
+			"error": fmt.Sprintf(
+				"Daemon refused: cwd %q is outside the allowed roots configured on this machine. "+
+					"Run `vvibe allow %s` on the daemon machine to permit it, "+
+					"or pick a different working directory.",
+				cwd, cwd,
+			),
+		})
 		return
 	}
 

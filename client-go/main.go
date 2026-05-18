@@ -65,6 +65,12 @@ func main() {
 		runUpgrade(args)
 	case "show-config":
 		runShowConfig()
+	case "allow":
+		runAllow(args)
+	case "deny":
+		runDeny(args)
+	case "allowed":
+		runAllowed()
 	case "sdk":
 		runSdkInstall()
 	case "doctor":
@@ -104,6 +110,13 @@ Commands:
                      Control the installed service.
   status             Show service state, configured server, token, log path.
   show-config        Print the config file path and current contents.
+  allow <path>       Add a filesystem root to the cwd allowlist. Sessions
+                     targeting a cwd outside the union of allowed roots
+                     are refused. Empty allowlist = no restriction
+                     (back-compat); the daemon logs a warning on
+                     startup until at least one entry is added.
+  deny <path>        Remove a root from the cwd allowlist.
+  allowed            Print current cwd allowlist.
   sdk                Install @anthropic-ai/claude-agent-sdk next to the
                      bridge so Claude sessions can resolve it. Runs
                      implicitly during 'install'; rerun manually if it
