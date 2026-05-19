@@ -305,6 +305,18 @@ export class Session {
   }
 
   private emitAuthRequired(hit: { agent: AgentKind; fixCommand: string; rawError: string }): void {
+    // Drop any resume token we captured during the failed turn. The SDK
+    // emits an `init` system message (with a fresh session_id) before it
+    // hits the auth check, so a failed-auth turn can still leave us with
+    // a token pointing at a session that doesn't exist anywhere — once
+    // the user fixes auth and clicks retry, that stale token would trip
+    // the "no conversation found" auto-recovery path and surface a
+    // confusing "Claude couldn't find this conversation" message even
+    // though the retry would have worked fine without the token.
+    if (this.resumeToken !== undefined) {
+      this.resumeToken = undefined;
+      stmts.updateAgentSessionResumeToken.run(null, this.id);
+    }
     const info: AuthRequiredInfo = {
       agent: hit.agent,
       fixCommand: hit.fixCommand,
