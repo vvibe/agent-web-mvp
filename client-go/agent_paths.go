@@ -56,6 +56,84 @@ func augmentPATHForAgents() {
 		len(add), strings.Join(add, " ; "))
 }
 
+// envForAgentSpawn returns an environment slice suitable for cmd.Env when
+// spawning a child process that needs to read the interactive user's
+// per-user config (e.g. claude reads ~/.claude/, codex reads ~/.codex/).
+//
+// Why: on Windows the daemon usually runs as LocalSystem, whose USERPROFILE
+// resolves to C:\Windows\System32\config\systemprofile. claude/codex
+// running under that environment look up their tokens at the wrong path
+// and report "Not logged in" even though the actual user is signed in.
+// `vvibe install` snapshots the interactive user's home into
+// Config.UserHomeDir; this helper splices that back into the child's
+// environment so the agent CLIs read from C:\Users\<user>\ instead.
+//
+// No-op when:
+//   - no snapshot exists (paired pre-feature, or running outside of
+//     `vvibe install`-managed contexts); child inherits as-is and we fall
+//     back to the original buggy behaviour rather than guessing
+//   - the current process's home already matches the snapshot (typical
+//     macOS/Linux user-mode service, or Windows foreground `vvibe run`)
+//
+// Returns the input slice unchanged in those cases so callers can pass
+// the result straight to cmd.Env without an extra branch.
+func envForAgentSpawn(base []string) []string {
+	cfg, err := loadConfig()
+	if err != nil || cfg == nil || cfg.UserHomeDir == "" {
+		return base
+	}
+	current, _ := os.UserHomeDir()
+	if current != "" && strings.EqualFold(current, cfg.UserHomeDir) {
+		return base
+	}
+	target := cfg.UserHomeDir
+
+	// Which env keys to override. Node.js's os.homedir() — and therefore
+	// the claude/codex CLIs that ride on top of it — reads USERPROFILE
+	// first on Windows, HOMEDRIVE+HOMEPATH second, HOME on POSIX. We set
+	// all the Windows ones together so a stale LocalSystem value can't
+	// shadow our override on the secondary fallback.
+	overrides := map[string]string{}
+	if runtime.GOOS == "windows" {
+		overrides["USERPROFILE"] = target
+		drive, path := target, ""
+		if len(target) >= 2 && target[1] == ':' {
+			drive = target[:2]
+			path = target[2:]
+		}
+		overrides["HOMEDRIVE"] = drive
+		overrides["HOMEPATH"] = path
+	} else {
+		overrides["HOME"] = target
+	}
+
+	out := make([]string, 0, len(base)+len(overrides))
+	applied := map[string]bool{}
+	for _, e := range base {
+		eq := strings.IndexByte(e, '=')
+		if eq < 0 {
+			out = append(out, e)
+			continue
+		}
+		// Windows env vars are case-insensitive at the OS level; match the
+		// upper-case key but preserve the original casing in our output so
+		// we don't unnecessarily reshape what the child sees.
+		key := strings.ToUpper(e[:eq])
+		if v, ok := overrides[key]; ok {
+			out = append(out, e[:eq]+"="+v)
+			applied[key] = true
+			continue
+		}
+		out = append(out, e)
+	}
+	for k, v := range overrides {
+		if !applied[k] {
+			out = append(out, k+"="+v)
+		}
+	}
+	return out
+}
+
 // snapshotInteractiveUserEnv records what the daemon won't be able to
 // figure out for itself once it's running under a different identity:
 //   - agent bin dirs (Windows only — see snapshotAgentBinDirs comment)

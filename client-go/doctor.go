@@ -209,8 +209,8 @@ func probeVersion(name string) string {
 }
 
 // sectionAgentAuth heuristically checks whether each agent CLI is signed in
-// on this machine. There is no authoritative "am I logged in" command for
-// either CLI today, so we rely on two cheap signals:
+// from the *daemon's* point of view. There is no authoritative "am I
+// logged in" command for either CLI today, so we rely on two cheap signals:
 //
 //  1. The agent's config dir (~/.claude, ~/.codex) exists with at least one
 //     file in it. Absence is a strong "definitely not signed in" signal
@@ -219,33 +219,48 @@ func probeVersion(name string) string {
 //  2. The corresponding API-key env var is set. Either signal is enough to
 //     count as "looks signed in".
 //
-// Neither signal is authoritative — a stale or expired token still presents
-// as a directory full of files. So a "looks signed in" report is a soft
-// pass, not a guarantee. The flagged-bad case is what matters: it catches
-// the newcomer who installed the CLI but never ran `claude /login`.
+// Critically, the home directory we check is the one the daemon will
+// actually use when spawning the agent CLI — Config.UserHomeDir from
+// the install-time snapshot — NOT os.UserHomeDir() of the doctor process.
+// On Windows the daemon runs as LocalSystem; when doctor is run from the
+// interactive user's shell those two values diverge, and a doctor that
+// checked its own home would falsely report green while the daemon
+// continues to spawn claude into systemprofile and get "Not logged in".
 func sectionAgentAuth(out io.Writer) int {
 	fmt.Fprintln(out, "\n--- Agent auth (heuristic) ------------------------------------------")
 	problems := 0
-	home, _ := os.UserHomeDir()
+
+	// Resolve "the home dir the daemon spawns agents under". This is what
+	// envForAgentSpawn forces USERPROFILE/HOME to at spawn time, so what
+	// we check here matches what claude/codex actually see at runtime.
+	cfg, _ := loadConfig()
+	var daemonHome string
+	var homeSource string
+	if cfg != nil && cfg.UserHomeDir != "" {
+		daemonHome = cfg.UserHomeDir
+		homeSource = "snapshot (Config.UserHomeDir)"
+	} else {
+		daemonHome, _ = os.UserHomeDir()
+		homeSource = "os.UserHomeDir() — no snapshot, run `vvibe install` to capture one"
+	}
+	fmt.Fprintf(out, "Spawn home: %s (%s)\n", daemonHome, homeSource)
+
 	checks := []struct {
-		agent      string
-		dirName    string
-		envVar     string
-		loginCmd   string
-		installCmd string
+		agent    string
+		dirName  string
+		envVar   string
+		loginCmd string
 	}{
-		{"claude", ".claude", "ANTHROPIC_API_KEY", "claude /login", "@anthropic-ai/claude-code"},
-		{"codex", ".codex", "OPENAI_API_KEY", "codex login", "@openai/codex"},
+		{"claude", ".claude", "ANTHROPIC_API_KEY", "claude /login"},
+		{"codex", ".codex", "OPENAI_API_KEY", "codex login"},
 	}
 	for _, c := range checks {
-		// Skip the check entirely if the binary isn't on PATH — sectionAgents
-		// will already have flagged that as a problem and we'd just be
-		// double-counting.
+		// Skip if the binary isn't on PATH — sectionAgents already flagged it.
 		if _, err := exec.LookPath(c.agent); err != nil {
 			fmt.Fprintf(out, "  --  %-6s skipped (CLI not on PATH)\n", c.agent)
 			continue
 		}
-		dir := filepath.Join(home, c.dirName)
+		dir := filepath.Join(daemonHome, c.dirName)
 		dirHasFiles := false
 		if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
 			dirHasFiles = true
@@ -259,7 +274,7 @@ func sectionAgentAuth(out io.Writer) int {
 		case envSet:
 			fmt.Fprintf(out, "  ok  %-6s %s is set (config dir absent — that's fine for API-key auth)\n", c.agent, c.envVar)
 		default:
-			fmt.Fprintf(out, "[!!] %-6s no sign of sign-in — run `%s` (or set %s) on the machine the daemon runs on\n", c.agent, c.loginCmd, c.envVar)
+			fmt.Fprintf(out, "[!!] %-6s no sign of sign-in — run `%s` as the user who owns %s (or set %s)\n", c.agent, c.loginCmd, daemonHome, c.envVar)
 			problems++
 		}
 	}

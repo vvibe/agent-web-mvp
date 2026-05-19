@@ -60,7 +60,9 @@ func (r *codexRunner) Run(
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = cwd
-	cmd.Env = os.Environ()
+	// See envForAgentSpawn — points codex at the interactive user's
+	// ~/.codex/ instead of LocalSystem's systemprofile.
+	cmd.Env = envForAgentSpawn(os.Environ())
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {

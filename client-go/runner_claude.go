@@ -83,7 +83,11 @@ func (r *claudeRunner) Run(
 
 	cmd := exec.CommandContext(ctx, nodeBin, r.bridgePath)
 	cmd.Dir = cwd
-	cmd.Env = os.Environ()
+	// Override USERPROFILE/HOME so claude reads ~/.claude/ from the
+	// interactive user's profile rather than the LocalSystem service's
+	// (which would falsely report "Not logged in" even after the user
+	// runs `claude /login`). No-op when daemon already runs as the user.
+	cmd.Env = envForAgentSpawn(os.Environ())
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
