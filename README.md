@@ -1,49 +1,52 @@
 # Agent Web MVP
 
-> **Experimental — superseded.** This repo validated the
-> embedded-agent-driving concept. The polished creator-facing product is
-> being built in a new repo `vvibe` (greenfield), targeting non-technical
-> creators with an in-dashboard agent driver. See
-> [ROADMAP.md](./ROADMAP.md) closeout notice for details on what carries
-> forward (the Go daemon + WS protocol) and what's deferred to the new
-> repo (server, web UI, M5–M11).
+> **Experimental project.**
 
 Self-hosted web UI for driving local AI coding agents (Claude Code, Codex
-CLI) from a browser. The original product framing — "step 1 of a longer
-SaaS roadmap" — was correct in direction but wrong in form: the long-form
-SaaS now lives in the new repo, while this repo's value distils to the
-daemon-and-protocol layer it proved out.
+CLI) from a browser.
 
 ## Architecture
 
 ```
-┌─────────────┐    /ws      ┌──────────────────┐    /client    ┌──────────────────┐
-│   Browser   │ ◄──────────►│  Node.js server  │◄─────────────►│  Go daemon       │
-│  (React)    │             │  (Express + ws)  │               │    (vvibe)       │
-└─────────────┘             └────────┬─────────┘               └────────┬─────────┘
-                                     │ (current MVP spawns here)        │ (will move
-                                     ▼                                  │  here next)
-                       ┌──────────────────────────┐                     ▼
-                       │ Claude Agent SDK / codex │           OS service (systemd /
-                       │       (local CLIs)       │           launchd / Win Service)
-                       └──────────────────────────┘
+┌─────────────┐   /ws    ┌──────────────────┐   /client   ┌──────────────────┐
+│   Browser   │ ◄───────►│  Node.js server  │ ◄─────────► │  Go daemon       │
+│  (React)    │          │  (Express + ws)  │             │    (vvibe)       │
+└─────────────┘          └──────────────────┘             └────────┬─────────┘
+                                                                   ▼
+                                                      ┌──────────────────────────┐
+                                                      │ Claude Agent SDK / codex │
+                                                      │    (daemon machine)      │
+                                                      └──────────────────────────┘
 ```
 
-Two independent pieces:
+Two execution paths share one server + session model. Which one a session
+uses is decided by `userId` at construction time
+([`server/sessions.ts`](./server/sessions.ts) `makeRunnerFactory`):
 
-- **Web app** (`server/` + `web/`) — single-machine MVP. Browser talks to a
-  local Node server, which spawns `claude`/`codex` directly.
-- **Go daemon** (`client-go/`) — the future-facing piece. Registers itself
-  as an OS service so it auto-starts on boot; connects back to the server.
-  Right now it only validates the service-registration plumbing. Agent
-  spawning will move from the Node server into this daemon once we know
-  registration is solid on Windows / macOS / Linux.
+- **Authed path** — Browser ↔ server ↔ paired Go daemon ↔ Claude/Codex on
+  the daemon's machine. `RemoteRunner` on the server relays prompts over
+  `/client` WS; the daemon runs the agent in the user's cwd. The daemon
+  registers as an OS service (`vvibe install`), holds the pairing token,
+  enforces a cwd allowlist before spawning, and auto-reconnects after
+  reboots. **This is the production path** — any non-`anon` user goes
+  through it.
+- **Anonymous dev mode** — Single-machine fallback when no OAuth env vars
+  are set. The server spawns `claude` / `codex` directly via local
+  `ClaudeRunner` / `CodexRunner`; any paired daemon shown in the sidebar
+  is decorative (`RemoteRunner` is bypassed). Exists so `npm run dev`
+  works without setting up GitHub OAuth.
 
-- **Sessions** live on the server and survive page reloads.
+- **Sessions** live on the server (SQLite-backed, including Claude resume
+  token + history) and survive page reloads *and* daemon reconnects.
 - **Claude** uses `@anthropic-ai/claude-agent-sdk` with the `canUseTool`
-  callback, so tool permission prompts are forwarded to the browser as a modal.
-- **Codex** spawns `codex exec` per turn (no permission UI yet — relies on
-  Codex's own `--ask-for-approval` / `--full-auto` flags via `CODEX_ARGS`).
+  callback. On the authed path, the daemon spawns a small embedded Node
+  bridge ([`client-go/helpers/claude-bridge.mjs`](./client-go/helpers/claude-bridge.mjs))
+  to host the SDK; permission prompts are forwarded all the way back to
+  the browser as a modal.
+- **Codex** spawns `codex exec` per turn (no permission UI yet — relies
+  on Codex's own `--ask-for-approval` / `--full-auto` flags via
+  `CODEX_ARGS`). Gated behind `CODEX_TRUST_DEFAULTS=1`, enforced on both
+  server and daemon.
 
 ## Prerequisites
 
@@ -257,12 +260,16 @@ for the prioritised next-step plan.
 agent-web-mvp/
 ├── server/                  # Node + tsx backend
 │   ├── index.ts             # Express + ws entry (/ws for browser, /client for daemon)
-│   ├── sessions.ts          # Session manager
+│   ├── sessions.ts          # Session manager + RunnerFactory (anon vs authed)
 │   ├── devices.ts           # Connected-daemon registry
+│   ├── auth.ts              # GitHub OAuth + browser session cookies
+│   ├── pairing.ts           # Device-code pairing flow
+│   ├── db.ts                # better-sqlite3 schema + statements
 │   └── agents/
 │       ├── base.ts          # AgentRunner interface
-│       ├── claude.ts        # Claude Agent SDK adapter
-│       └── codex.ts         # Codex subprocess adapter
+│       ├── claude.ts        # Local Claude Agent SDK adapter (anon dev path)
+│       ├── codex.ts         # Local Codex subprocess adapter (anon dev path)
+│       └── remote.ts        # RemoteRunner — relays to a paired daemon
 ├── web/                     # React + Vite frontend
 │   ├── index.html
 │   └── src/
@@ -270,17 +277,32 @@ agent-web-mvp/
 │       ├── App.tsx
 │       ├── ws.ts            # WebSocket client w/ auto-reconnect
 │       ├── styles.css
-│       └── components/
+│       └── components/      # ChatPane, SessionList, NewSessionDialog,
+│                            # PermissionModal, DevicesPanel, DirectoryPicker,
+│                            # LoginGate, PairPage
 ├── client-go/               # Cross-platform Go daemon (see client-go/README.md)
-│   ├── main.go              # CLI: install / uninstall / run / login / status
+│   ├── main.go              # CLI: install/uninstall/run/login/status/upgrade/
+│   │                        #      doctor/allow/deny/allowed/sdk/show-config/…
 │   ├── service.go           # kardianos/service integration
 │   ├── relay.go             # WebSocket relay + heartbeat + reconnect
+│   ├── pair.go              # Device-code pairing client
+│   ├── runner.go            # Runner interface + runManager (runId → handle)
+│   ├── runner_claude.go     # Spawns embedded Node bridge for Claude SDK
+│   ├── runner_codex.go      # Spawns `codex exec` per turn
+│   ├── helpers/
+│   │   └── claude-bridge.mjs # Embedded Node host for @anthropic-ai/claude-agent-sdk
+│   ├── allowlist.go         # cwd allowlist enforcement (H-3)
+│   ├── upgrade.go           # `vvibe upgrade` self-update
+│   ├── doctor.go            # `vvibe doctor` environment check
+│   ├── sdk.go               # `vvibe sdk` Claude SDK install helper
+│   ├── agent_paths.go       # Resolve claude / codex binaries
+│   ├── dir.go               # Directory listing for the UI picker
 │   ├── config.go            # OS-appropriate config + log paths
 │   ├── platform.go
 │   ├── Makefile             # Cross-compile matrix
 │   └── go.mod
 └── shared/
-    └── types.ts             # Shared protocol types (client + server)
+    └── types.ts             # Shared protocol types + zod schemas (client + server)
 ```
 
 ## Validating the Go daemon
@@ -291,5 +313,3 @@ Build & install on each OS (see `client-go/README.md` for details), then:
 2. Run `vvibe install` on Windows / macOS / Linux.
 3. Reboot.
 4. Server console should print `[client] device registered: …` within ~5s.
-
-That's the success criterion for the cross-platform service-registration milestone.
