@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  AuthRequiredInfo,
   ChatMessage,
   DeviceInfo,
   PermissionRequest,
@@ -10,6 +11,7 @@ import { WSClient, makeWsUrl } from './ws';
 import { SessionList } from './components/SessionList';
 import { ChatPane } from './components/ChatPane';
 import { PermissionModal } from './components/PermissionModal';
+import { AuthRequiredModal } from './components/AuthRequiredModal';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { LoginGate } from './components/LoginGate';
 import { PairPage } from './components/PairPage';
@@ -68,6 +70,9 @@ function MainApp({ me }: { me: Me }) {
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
+  // Keyed by sessionId so a re-send doesn't queue a second modal on top of
+  // the dismissed one — the latest auth_required for a given session wins.
+  const [authRequired, setAuthRequired] = useState<Record<string, AuthRequiredInfo>>({});
   const [showNew, setShowNew] = useState(false);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
 
@@ -124,6 +129,9 @@ function MainApp({ me }: { me: Me }) {
           prev.filter((p) => p.requestId !== msg.requestId),
         );
         break;
+      case 'auth_required':
+        setAuthRequired((prev) => ({ ...prev, [msg.sessionId]: msg.info }));
+        break;
       case 'devices':
         setDevices(msg.devices);
         break;
@@ -152,6 +160,7 @@ function MainApp({ me }: { me: Me }) {
   const activeMessages = activeId ? (messages[activeId] ?? []) : [];
 
   const activePermission = pendingPermissions.find((p) => p.sessionId === activeId);
+  const activeAuthRequired = activeId ? authRequired[activeId] : undefined;
 
   return (
     <div className="app">
@@ -243,6 +252,30 @@ function MainApp({ me }: { me: Me }) {
               allow,
             })
           }
+        />
+      )}
+
+      {activeAuthRequired && activeId && (
+        <AuthRequiredModal
+          info={activeAuthRequired}
+          onDismiss={() =>
+            setAuthRequired((prev) => {
+              const next = { ...prev };
+              delete next[activeId];
+              return next;
+            })
+          }
+          onRetry={() => {
+            // Optimistically close the modal. If auth is still broken, the
+            // server will emit another auth_required and the modal will
+            // reopen automatically.
+            wsRef.current?.send({ type: 'retry_last', sessionId: activeId });
+            setAuthRequired((prev) => {
+              const next = { ...prev };
+              delete next[activeId];
+              return next;
+            });
+          }}
         />
       )}
 

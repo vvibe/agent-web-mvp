@@ -624,6 +624,10 @@ const store = new SessionStore(
       const s = store.get(sid);
       if (s) broadcastToUser(s.userId, { type: 'error', sessionId: sid, error: err });
     },
+    onAuthRequired: (sid, info) => {
+      const s = store.get(sid);
+      if (s) broadcastToUser(s.userId, { type: 'auth_required', sessionId: sid, info });
+    },
   },
   makeRunnerFactory(devices),
 );
@@ -736,6 +740,28 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
         return;
       }
       s.enqueuePrompt(msg.prompt);
+      return;
+    }
+    case 'retry_last': {
+      const s = mustSession(ws, userId, msg.sessionId);
+      if (!s) return;
+      // Apply the same rate limit as send_prompt — a wedged retry button
+      // is functionally indistinguishable from spamming new prompts.
+      if (!checkPromptRate(userId, msg.sessionId)) {
+        send(ws, {
+          type: 'error',
+          sessionId: msg.sessionId,
+          error: 'Too many prompts on this session; slow down (10/min).',
+        });
+        return;
+      }
+      if (!s.retryLastUserPrompt()) {
+        send(ws, {
+          type: 'error',
+          sessionId: msg.sessionId,
+          error: 'Nothing to retry — this session has no previous user message.',
+        });
+      }
       return;
     }
     case 'permission_response': {

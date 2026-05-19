@@ -50,6 +50,7 @@ func runDoctor() {
 		problems += sectionPathDiscovery(out)
 	}
 	problems += sectionAgents(out)
+	problems += sectionAgentAuth(out)
 	problems += sectionSDK(out)
 	problems += sectionReachability(out)
 	sectionLogTail(out)
@@ -205,6 +206,64 @@ func probeVersion(name string) string {
 		return "(empty version output)"
 	}
 	return "v" + strings.TrimPrefix(line, "v")
+}
+
+// sectionAgentAuth heuristically checks whether each agent CLI is signed in
+// on this machine. There is no authoritative "am I logged in" command for
+// either CLI today, so we rely on two cheap signals:
+//
+//  1. The agent's config dir (~/.claude, ~/.codex) exists with at least one
+//     file in it. Absence is a strong "definitely not signed in" signal
+//     (this is the exact state that produced the "Not logged in · Please
+//     run /login" trip-up that motivated adding this section).
+//  2. The corresponding API-key env var is set. Either signal is enough to
+//     count as "looks signed in".
+//
+// Neither signal is authoritative — a stale or expired token still presents
+// as a directory full of files. So a "looks signed in" report is a soft
+// pass, not a guarantee. The flagged-bad case is what matters: it catches
+// the newcomer who installed the CLI but never ran `claude /login`.
+func sectionAgentAuth(out io.Writer) int {
+	fmt.Fprintln(out, "\n--- Agent auth (heuristic) ------------------------------------------")
+	problems := 0
+	home, _ := os.UserHomeDir()
+	checks := []struct {
+		agent      string
+		dirName    string
+		envVar     string
+		loginCmd   string
+		installCmd string
+	}{
+		{"claude", ".claude", "ANTHROPIC_API_KEY", "claude /login", "@anthropic-ai/claude-code"},
+		{"codex", ".codex", "OPENAI_API_KEY", "codex login", "@openai/codex"},
+	}
+	for _, c := range checks {
+		// Skip the check entirely if the binary isn't on PATH — sectionAgents
+		// will already have flagged that as a problem and we'd just be
+		// double-counting.
+		if _, err := exec.LookPath(c.agent); err != nil {
+			fmt.Fprintf(out, "  --  %-6s skipped (CLI not on PATH)\n", c.agent)
+			continue
+		}
+		dir := filepath.Join(home, c.dirName)
+		dirHasFiles := false
+		if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+			dirHasFiles = true
+		}
+		envSet := os.Getenv(c.envVar) != ""
+		switch {
+		case dirHasFiles && envSet:
+			fmt.Fprintf(out, "  ok  %-6s %s exists + %s is set\n", c.agent, dir, c.envVar)
+		case dirHasFiles:
+			fmt.Fprintf(out, "  ok  %-6s %s exists (token may still be expired — only the CLI itself can confirm)\n", c.agent, dir)
+		case envSet:
+			fmt.Fprintf(out, "  ok  %-6s %s is set (config dir absent — that's fine for API-key auth)\n", c.agent, c.envVar)
+		default:
+			fmt.Fprintf(out, "[!!] %-6s no sign of sign-in — run `%s` (or set %s) on the machine the daemon runs on\n", c.agent, c.loginCmd, c.envVar)
+			problems++
+		}
+	}
+	return problems
 }
 
 func sectionSDK(out io.Writer) int {

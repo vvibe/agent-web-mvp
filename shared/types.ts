@@ -57,6 +57,63 @@ export interface PermissionRequest {
   input: unknown;
 }
 
+/** Surfaced when the agent CLI reports it isn't authenticated. The UI renders
+ *  this as a modal with the fix command rather than burying the raw error in
+ *  the chat log, because "Not logged in" coming back as a system bubble is
+ *  the single most common newcomer trip-up. */
+export interface AuthRequiredInfo {
+  agent: AgentKind;
+  /** Shell command the user should run on the machine where the agent CLI
+   *  lives (anon mode: this machine; daemon mode: the paired machine). */
+  fixCommand: string;
+  /** Where the command needs to run, in human terms. */
+  context: 'this-machine' | 'daemon-machine';
+  /** Verbatim error string the agent CLI emitted, for the curious + bug
+   *  reports. Bounded so a runaway error message can't blow up the modal. */
+  rawError: string;
+}
+
+/** Pattern-match an agent CLI's error/stderr output to decide whether it's an
+ *  authentication failure. Conservative on purpose — false positives would
+ *  override a legitimate error with a misleading "go run /login" suggestion. */
+export function detectAuthRequired(text: string, agent: AgentKind): Pick<AuthRequiredInfo, 'agent' | 'fixCommand' | 'rawError'> | null {
+  if (!text) return null;
+  const rawError = text.length > 1000 ? text.slice(0, 1000) + '…' : text;
+
+  if (agent === 'claude') {
+    // Observed: "Not logged in · Please run /login" (verbatim from claude CLI;
+    // surfaces through the SDK error string + the local-runner system message).
+    // Also catches the explicit /login prompt and API-key rejection paths.
+    if (
+      /not\s+logged\s+in/i.test(text) ||
+      /please\s+run\s+\/?login/i.test(text) ||
+      /please\s+run\s+claude\s+\/?login/i.test(text) ||
+      /invalid\s+api\s+key/i.test(text) ||
+      /authentication\s+failed/i.test(text)
+    ) {
+      return { agent: 'claude', fixCommand: 'claude /login', rawError };
+    }
+    return null;
+  }
+
+  if (agent === 'codex') {
+    // codex's exact wording is less stable across versions; match the broad
+    // shape of "you need to log in" or "no API key" errors but stay conservative.
+    if (
+      /please\s+(sign|log)\s*in/i.test(text) ||
+      /run\s+codex\s+login/i.test(text) ||
+      /not\s+(authenticated|signed\s+in|logged\s+in)/i.test(text) ||
+      /no\s+openai\s+api\s+key/i.test(text) ||
+      /missing\s+openai_api_key/i.test(text)
+    ) {
+      return { agent: 'codex', fixCommand: 'codex login', rawError };
+    }
+    return null;
+  }
+
+  return null;
+}
+
 /** Connected daemon as visible to the browser. */
 export interface DeviceInfo {
   id: string;
@@ -91,6 +148,11 @@ export type ClientMessage =
       model?: string;
     }
   | { type: 'send_prompt'; sessionId: string; prompt: string }
+  /** Re-run the most recent user prompt on this session without showing a
+   *  duplicate user bubble. Used by the "I've logged in, retry" flow on the
+   *  auth-required modal: the user message is already in history from the
+   *  failed attempt, we just want to re-feed it to the runner. */
+  | { type: 'retry_last'; sessionId: string }
   | { type: 'permission_response'; sessionId: string; requestId: string; allow: boolean }
   | { type: 'cancel'; sessionId: string }
   /** Emergency brake — cancel every running/awaiting session this user owns. */
@@ -118,6 +180,7 @@ export type ServerMessage =
   | { type: 'message'; message: ChatMessage }
   | { type: 'permission_request'; request: PermissionRequest }
   | { type: 'permission_resolved'; sessionId: string; requestId: string }
+  | { type: 'auth_required'; sessionId: string; info: AuthRequiredInfo }
   | { type: 'devices'; devices: DeviceInfo[] }
   /** Acknowledgement for `cancel_all` — how many sessions were actually
    *  cancelled (zero is a normal "nothing was running" reply, not an error). */

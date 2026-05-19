@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type {
   AgentKind,
+  AuthRequiredInfo,
   ChatMessage,
   PermissionRequest,
   SessionMeta,
   SessionStatus,
 } from '../shared/types.ts';
+import { detectAuthRequired } from '../shared/types.ts';
 import type { AgentEvents, AgentRunner } from './agents/base.ts';
 import type { AgentMessageRow, AgentSessionRow } from './db.ts';
 import { ClaudeRunner } from './agents/claude.ts';
@@ -51,6 +53,7 @@ export interface SessionEvents {
   onPermissionRequest: (req: PermissionRequest) => void;
   onPermissionResolved: (sessionId: string, requestId: string) => void;
   onError: (sessionId: string, error: string) => void;
+  onAuthRequired: (sessionId: string, info: AuthRequiredInfo) => void;
 }
 
 export class Session {
@@ -89,6 +92,10 @@ export class Session {
   // that recovered once and ran successfully can still recover again
   // weeks later if the daemon machine is wiped a second time.
   private staleResumeRetried = false;
+  // Per-turn latch: a single "not logged in" failure typically surfaces
+  // BOTH as stderr (system message) AND as the final error. We want one
+  // modal, not two. Reset on every fresh prompt.
+  private authAlertedThisTurn = false;
 
   constructor(
     opts: {
@@ -118,13 +125,46 @@ export class Session {
     if (opts.history) this.history = opts.history;
 
     const agentEvents: AgentEvents = {
-      onMessage: (m) => this.recordMessage(m),
+      onMessage: (m) => {
+        // Codex pipes stderr through as a system message rather than as an
+        // Error, so the auth check has to run here too — not just in onError.
+        if (m.role === 'system' && !this.authAlertedThisTurn) {
+          const hit = detectAuthRequired(m.text, this.agent);
+          if (hit) {
+            this.authAlertedThisTurn = true;
+            this.emitAuthRequired(hit);
+          }
+        }
+        this.recordMessage(m);
+      },
       onPermissionRequest: (r) => this.askPermission(r),
       onError: (err) => {
         if (this.cancelling) {
           // Expected: SDK threw because we aborted. Don't paint the session red.
           this.recordMessage({ role: 'system', text: 'Cancelled.' });
           return;
+        }
+        // Auth-required interception. We replace the raw "Not logged in ·
+        // Please run /login" error with a friendlier system message and an
+        // auth_required event for the UI modal. Run BEFORE the stale-resume
+        // recovery so a misconfigured auth state can't masquerade as a stale
+        // session and trigger a retry loop.
+        if (!this.authAlertedThisTurn) {
+          const hit = detectAuthRequired(err.message, this.agent);
+          if (hit) {
+            this.authAlertedThisTurn = true;
+            this.setStatus('error');
+            this.emitAuthRequired(hit);
+            // "This machine" is unambiguous for anon (server + agent are co-
+            // located) but misleading for the daemon path — the user might
+            // be viewing from a phone while the daemon runs on a desktop.
+            const where = this.userId === 'anon' ? 'on this machine' : 'on the daemon machine';
+            this.recordMessage({
+              role: 'system',
+              text: `${this.agent} CLI is not signed in ${where}. Run \`${hit.fixCommand}\` there and retry.`,
+            });
+            return;
+          }
         }
         // Stale resume token recovery. Claude Code stores conversation
         // history locally on the daemon machine (~/.claude/projects/…)
@@ -197,9 +237,35 @@ export class Session {
   }
 
   enqueuePrompt(prompt: string) {
+    // New user prompt = fresh chance. If they ran `claude /login` between
+    // turns, we want to detect a *new* auth failure on this turn rather
+    // than staying silent because we already alerted earlier.
+    this.authAlertedThisTurn = false;
     this.recordMessage({ role: 'user', text: prompt });
     this.queue.push(prompt);
     this.drainQueue();
+  }
+
+  /** Re-run the last user prompt without recording a duplicate user bubble.
+   *  Used by the auth-required modal's "I've logged in, retry" button.
+   *  Returns true if a prompt was queued, false if there's no user message
+   *  to retry (defensive — auth_required only ever fires after a failed
+   *  user prompt, so this should always succeed in practice). */
+  retryLastUserPrompt(): boolean {
+    // Scan from the end — most chats are short and we don't expect this to
+    // be hot, but linear-from-tail is the right shape regardless.
+    let last: ChatMessage | undefined;
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      if (this.history[i].role === 'user') { last = this.history[i]; break; }
+    }
+    if (!last) return false;
+    this.authAlertedThisTurn = false;
+    // Push to the FRONT so a queued retry runs before any unrelated prompts
+    // the user may have typed before clicking retry. Same shape as the
+    // stale-resume auto-recovery path above.
+    this.queue.unshift(last.text);
+    this.drainQueue();
+    return true;
   }
 
   resolvePermission(requestId: string, allow: boolean) {
@@ -236,6 +302,16 @@ export class Session {
     // the user retype if Claude rejects a stale resume token.
     this.inFlightPrompt = next;
     await this.runner.send(next, this.resumeToken);
+  }
+
+  private emitAuthRequired(hit: { agent: AgentKind; fixCommand: string; rawError: string }): void {
+    const info: AuthRequiredInfo = {
+      agent: hit.agent,
+      fixCommand: hit.fixCommand,
+      rawError: hit.rawError,
+      context: this.userId === 'anon' ? 'this-machine' : 'daemon-machine',
+    };
+    this.events.onAuthRequired(this.id, info);
   }
 
   private askPermission(req: { toolName: string; input: unknown }): Promise<boolean> {

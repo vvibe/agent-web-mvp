@@ -260,15 +260,35 @@ esac
 # what's actually usable before pairing.
 log "Checking for agent CLIs"
 missing_tools=''
+present_tools=''
 for tool in claude codex; do
   if command -v "$tool" >/dev/null 2>&1; then
     ver="$("$tool" --version 2>/dev/null | head -n1 || true)"
     printf '   [ok] %s%s\n' "$tool" "${ver:+ ($ver)}"
+    present_tools="${present_tools} ${tool}"
   else
     printf '   [--] %s not found on PATH\n' "$tool"
     missing_tools="${missing_tools} ${tool}"
   fi
 done
+
+# Sign-in reminder. `--version` doesn't require auth, so detecting the binary
+# tells us nothing about whether the user has actually logged in. The web UI
+# now surfaces "Not logged in" as a friendly modal, but flagging it up-front
+# here saves the round-trip of "install → pair → send first prompt → see
+# error → come back to terminal".
+if [ -n "$present_tools" ]; then
+  printf '\n'
+  # shellcheck disable=SC2086 # word-splitting is intentional here
+  printf '   Note: %s --version succeeded, but that does not prove sign-in.\n' "$(printf '%s' $present_tools | tr ' ' '/')"
+  printf '   Before sending a prompt, make sure you have run:\n'
+  for t in $present_tools; do
+    case "$t" in
+      claude) printf '     claude /login\n' ;;
+      codex)  printf '     codex login\n' ;;
+    esac
+  done
+fi
 
 # Offer to install missing CLIs via npm. Node is a hard prerequisite for the
 # agent CLIs themselves, so we offer to install it first via brew (macOS)

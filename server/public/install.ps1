@@ -152,15 +152,32 @@ if ($ServerUrl -match '^wss?://') {
 # what's usable before pairing.
 Write-Step "Checking for agent CLIs"
 $missingTools = @()
+$presentTools = @()
 foreach ($tool in @('claude', 'codex')) {
   $cmd = Get-Command $tool -ErrorAction SilentlyContinue
   if ($cmd) {
     $v = try { (& $tool --version 2>$null | Select-Object -First 1) } catch { '' }
     if ($v) { Write-Host "   [ok] $tool ($v)" -ForegroundColor Green }
     else    { Write-Host "   [ok] $tool"      -ForegroundColor Green }
+    $presentTools += $tool
   } else {
     Write-Host "   [--] $tool not found on PATH" -ForegroundColor Yellow
     $missingTools += $tool
+  }
+}
+
+# Sign-in reminder. `--version` doesn't require auth, so detecting the binary
+# tells us nothing about whether the user has actually logged in. The web UI
+# now surfaces "Not logged in" as a friendly modal, but flagging it up-front
+# here saves the round-trip of "install → pair → send first prompt → see
+# error → come back to terminal".
+if ($presentTools.Count -gt 0) {
+  $loginMap = @{ 'claude' = 'claude /login'; 'codex' = 'codex login' }
+  Write-Host ""
+  Write-Host "   Note: $($presentTools -join ' / ') --version succeeded, but that doesn't" -ForegroundColor DarkGray
+  Write-Host "   prove you're signed in. Before sending a prompt, make sure you've run:" -ForegroundColor DarkGray
+  foreach ($t in $presentTools) {
+    Write-Host "     $($loginMap[$t])" -ForegroundColor DarkGray
   }
 }
 
