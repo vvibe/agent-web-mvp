@@ -44,6 +44,19 @@ type Config struct {
 	// own profile (C:\WINDOWS\system32\config\systemprofile or /root)
 	// and the user has to manually type their way to a sensible cwd.
 	UserHomeDir string `json:"user_home_dir,omitempty"`
+	// CodexTrustDefaults is the daemon-side opt-in for spawning codex.
+	// The runner refuses to start codex unless either this field is true
+	// or the legacy CODEX_TRUST_DEFAULTS=1 env var is set. Stored in
+	// config (not env) so users don't need an admin shell to enable
+	// codex on Windows — `vvibe codex enable` writes here and a `vvibe
+	// restart` is enough. See runner_codex.go for the read side.
+	CodexTrustDefaults bool `json:"codex_trust_defaults,omitempty"`
+	// CodexArgs are the extra arguments injected before the prompt when
+	// the runner spawns `codex exec` (e.g. "--sandbox read-only
+	// --ask-for-approval on-request"). Empty means "codex's built-in
+	// defaults", which is exactly what the gate is supposed to prevent,
+	// so `vvibe codex enable` writes a conservative baseline by default.
+	CodexArgs string `json:"codex_args,omitempty"`
 }
 
 // appDir returns the directory that holds client.json and client.log.

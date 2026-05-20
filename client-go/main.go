@@ -73,6 +73,8 @@ func main() {
 		runAllowed()
 	case "sdk":
 		runSdkInstall()
+	case "codex":
+		runCodex(args)
 	case "doctor":
 		runDoctor()
 	case "version":
@@ -121,6 +123,13 @@ Commands:
                      bridge so Claude sessions can resolve it. Runs
                      implicitly during 'install'; rerun manually if it
                      failed (e.g. you didn't have npm yet).
+  codex [verb]       Manage the daemon-side codex policy gate. Verbs:
+                       (none)   Show current state.
+                       enable   Allow codex sessions (interactive args
+                                prompt; --args / --yes to skip).
+                       disable  Refuse codex sessions on this daemon.
+                     Server-side opt-in (CODEX_TRUST_DEFAULTS) is
+                     independent — see README.
   doctor             Print a diagnostic report (config, agents on PATH,
                      SDK, server reachability, recent log). Paste it
                      into a GitHub issue when filing a bug.

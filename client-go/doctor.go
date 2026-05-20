@@ -51,6 +51,7 @@ func runDoctor() {
 	}
 	problems += sectionAgents(out)
 	problems += sectionAgentAuth(out)
+	problems += sectionCodexPolicy(out)
 	problems += sectionSDK(out)
 	problems += sectionReachability(out)
 	sectionLogTail(out)
@@ -278,6 +279,67 @@ func sectionAgentAuth(out io.Writer) int {
 			problems++
 		}
 	}
+	return problems
+}
+
+// sectionCodexPolicy checks the daemon-side opt-in that gates the codex
+// runner. Two signals trigger it (see runner_codex.go):
+//   - Config: cfg.CodexTrustDefaults + cfg.CodexArgs (written by
+//     `vvibe codex enable`, the preferred path).
+//   - Env:    CODEX_TRUST_DEFAULTS=1 + CODEX_ARGS (legacy, kept for
+//     back-compat with users who already wired this into their
+//     service / shell environment).
+//
+// The doctor process and the running service can disagree on env-var
+// visibility (notably on Windows — see note below), but the config file
+// is shared, so reading both signals here matches what the runner sees.
+func sectionCodexPolicy(out io.Writer) int {
+	fmt.Fprintln(out, "\n--- Codex policy gate -----------------------------------------------")
+	problems := 0
+	if _, err := exec.LookPath("codex"); err != nil {
+		fmt.Fprintln(out, "  --  codex not on PATH — skipping (install codex first if you want to use it)")
+		return 0
+	}
+	cfg, _ := loadConfig()
+	trustedByConfig := cfg != nil && cfg.CodexTrustDefaults
+	envTrust := os.Getenv("CODEX_TRUST_DEFAULTS")
+	trustedByEnv := envTrust == "1"
+
+	switch {
+	case trustedByConfig:
+		fmt.Fprintln(out, "  ok  enabled via config (`vvibe codex enable`)")
+	case trustedByEnv:
+		fmt.Fprintln(out, "  ok  enabled via legacy env var CODEX_TRUST_DEFAULTS=1")
+	default:
+		fmt.Fprintln(out, "[!!] codex disabled — `vvibe codex enable` to opt in (no admin needed)")
+		problems++
+	}
+
+	var argsStr string
+	var argsSource string
+	if cfg != nil && cfg.CodexArgs != "" {
+		argsStr = cfg.CodexArgs
+		argsSource = "config"
+	} else if v := os.Getenv("CODEX_ARGS"); v != "" {
+		argsStr = v
+		argsSource = "env"
+	}
+	if argsStr != "" {
+		fmt.Fprintf(out, "  ok  args [%s]: %s\n", argsSource, argsStr)
+	} else if trustedByConfig || trustedByEnv {
+		fmt.Fprintln(out, "[!!] codex args are empty — codex will run with its built-in defaults, which is exactly what the gate is trying to prevent.")
+		fmt.Fprintln(out, "     Fix:  vvibe codex enable --args \"--sandbox read-only --ask-for-approval on-request\"")
+		problems++
+	}
+
+	if runtime.GOOS == "windows" && !trustedByConfig && trustedByEnv {
+		// Heads-up for the bear-trap: env var present in the doctor process
+		// (user shell) doesn't guarantee the service sees it. Steer toward
+		// the config path instead of teaching them about Machine scope.
+		fmt.Fprintln(out, "  note: env-var path on Windows requires Machine-scope to be visible to the LocalSystem service.")
+		fmt.Fprintln(out, "        Prefer `vvibe codex enable`, which writes to the config file the service already reads.")
+	}
+	fmt.Fprintln(out, "  note: the *server* also gates on its own CODEX_TRUST_DEFAULTS — this check only covers the daemon side.")
 	return problems
 }
 

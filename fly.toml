@@ -23,6 +23,12 @@ primary_region = 'nrt' # Tokyo — closest Fly region to Taiwan
   ALLOWED_ORIGINS = 'https://agent-web-mvp-renddi.fly.dev'
   DB_PATH = '/data/app.db'
   NODE_ENV = 'production'
+  # Server-side opt-in for Codex sessions. Without this the server refuses
+  # every `create_session` for agent='codex' (see server/index.ts). Stored
+  # in [env] rather than `fly secrets` because it's a policy flag, not a
+  # credential — keeping it in git makes "when did we enable codex?"
+  # answerable via blame.
+  CODEX_TRUST_DEFAULTS = '1'
 
 [[mounts]]
   source = 'agent_web_data'

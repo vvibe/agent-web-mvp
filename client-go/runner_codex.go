@@ -31,11 +31,18 @@ func (r *codexRunner) Run(
 	// sessions unless CODEX_TRUST_DEFAULTS=1, but the daemon enforces the
 	// same constraint locally so a misconfigured / out-of-date server can't
 	// trick us into running codex with whatever defaults it ships with.
-	if os.Getenv("CODEX_TRUST_DEFAULTS") != "1" {
-		msg := "Codex disabled: set CODEX_TRUST_DEFAULTS=1 on the daemon " +
-			"environment and configure CODEX_ARGS (e.g. " +
-			"`--sandbox read-only --ask-for-approval on-request`) before " +
-			"enabling. See README."
+	//
+	// Two opt-in paths, checked in order so the new path takes precedence:
+	//   1. Config file (set via `vvibe codex enable`) — preferred, since
+	//      it survives reboots and doesn't need admin to write.
+	//   2. Legacy env var CODEX_TRUST_DEFAULTS=1 — kept for back-compat with
+	//      users who already wired this into their service/shell env.
+	cfg, _ := loadConfig()
+	trustedByConfig := cfg != nil && cfg.CodexTrustDefaults
+	trustedByEnv := os.Getenv("CODEX_TRUST_DEFAULTS") == "1"
+	if !trustedByConfig && !trustedByEnv {
+		msg := "Codex disabled on this daemon. Run `vvibe codex enable` to opt in " +
+			"(no admin needed), then `vvibe restart`. See README for details."
 		emit("system", msg, nil)
 		return "", fmt.Errorf("codex disabled by daemon policy")
 	}
@@ -54,7 +61,15 @@ func (r *codexRunner) Run(
 	if bin == "" {
 		bin = "codex"
 	}
-	extra := strings.Fields(os.Getenv("CODEX_ARGS"))
+	// Args resolution mirrors the trust-flag precedence: config first,
+	// then env, so `vvibe codex enable --args …` wins over a stale env var.
+	argsStr := ""
+	if cfg != nil && cfg.CodexArgs != "" {
+		argsStr = cfg.CodexArgs
+	} else {
+		argsStr = os.Getenv("CODEX_ARGS")
+	}
+	extra := strings.Fields(argsStr)
 	args := append([]string{"exec"}, extra...)
 	args = append(args, prompt)
 
