@@ -12,26 +12,39 @@ import (
 )
 
 // augmentPATHForAgents prepends discovered Node / agent install directories
-// to the process PATH. On Windows the daemon often runs as LocalSystem
-// (registered as a service) whose PATH lacks per-user installs like nvs,
-// nvm-windows, volta, scoop, and npm globals. Without this augmentation
-// exec.LookPath misses `claude` / `codex` / `node`, detectAgents() returns
-// an empty list, and the web UI tells the user there are no agent CLIs on
-// PATH — even when their own shell can see both.
+// to the process PATH. Two reasons the daemon's inherited PATH may not
+// see the user's installed CLIs:
 //
-// No-op on macOS/Linux: launchd/systemd user-mode services run as the
-// invoking user and inherit a sensible PATH already.
+//   - Windows: the SCM service often runs as LocalSystem whose PATH is
+//     just System32 — none of the per-account installs (nvs, nvm-windows,
+//     Volta, scoop, npm globals) show up.
+//
+//   - macOS: even user-mode LaunchAgents get launchd's minimal process
+//     PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), not the user's shell PATH.
+//     Homebrew, nvm, and ~/.local/bin are invisible. (The original
+//     assumption that launchd "inherits a sensible PATH" was wrong —
+//     verified empirically.)
+//
+// Without this augmentation exec.LookPath misses `claude` / `codex` /
+// `node` and the Claude bridge fails to start with "executable file not
+// found in $PATH" the moment the user sends a prompt.
+//
+// Linux behaves correctly today (systemd user units inherit the shell's
+// PATH via the user manager), but the heuristic search is cheap and the
+// candidate list overlaps with macOS's, so we share the codepath rather
+// than gate on OS.
 func augmentPATHForAgents() {
-	if runtime.GOOS != "windows" {
-		return
-	}
 	// Snapshot from `vvibe install` runs first: these are dirs that
 	// actually held a working `claude` / `codex` / `node` when the
 	// interactive user ran install. Heuristic discovery comes second as
 	// a fallback for fresh installs that pre-date the snapshot field, or
 	// for binaries added after install.
 	dirs := loadSnapshotAgentBinDirs()
-	dirs = append(dirs, discoverWindowsAgentDirs()...)
+	if runtime.GOOS == "windows" {
+		dirs = append(dirs, discoverWindowsAgentDirs()...)
+	} else {
+		dirs = append(dirs, discoverUnixAgentDirs()...)
+	}
 	if len(dirs) == 0 {
 		return
 	}
@@ -252,6 +265,40 @@ func discoverWindowsAgentDirs() []string {
 		`C:\ProgramData\scoop\apps\nodejs\current`,
 		`C:\ProgramData\chocolatey\bin`,     // chocolatey shims (node, npm, claude/codex if user `choco install`'d)
 		`C:\ProgramData\chocolatey\lib\nodejs\tools`,
+	)
+
+	var out []string
+	for _, d := range candidates {
+		if dirContainsAgentBinary(d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// discoverUnixAgentDirs returns directories on macOS/Linux that commonly
+// hold a working node / claude / codex install, filtered to ones that
+// actually exist. Same precedence as install.sh's PATH ordering: per-user
+// installs (nvm, npm-global, ~/.local/bin) before system ones (Homebrew,
+// /usr/local).
+//
+// Unlike the Windows side we don't enumerate every user account — macOS /
+// Linux LaunchAgents and systemd user units already run as the user, so
+// `os.UserHomeDir()` returns the correct home directly.
+func discoverUnixAgentDirs() []string {
+	var candidates []string
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if nvm := latestNvmNodeBin(home); nvm != "" {
+			candidates = append(candidates, nvm)
+		}
+		candidates = append(candidates,
+			filepath.Join(home, ".npm-global", "bin"),
+			filepath.Join(home, ".local", "bin"),
+		)
+	}
+	candidates = append(candidates,
+		"/opt/homebrew/bin", // Apple Silicon brew
+		"/usr/local/bin",    // Intel brew + generic Unix
 	)
 
 	var out []string

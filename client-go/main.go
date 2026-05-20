@@ -41,15 +41,6 @@ func main() {
 		os.Exit(2)
 	}
 
-	// Make the daemon's PATH match what an interactive shell on this user's
-	// machine would see (npm-global, nvm, Homebrew, ~/.local/bin). Critical
-	// under macOS launchd, whose inherited PATH is /usr/bin:/bin:/usr/sbin:
-	// /sbin only — without this, `vvibe run` finds neither `claude`/`codex`
-	// nor the `node` it spawns for the Claude bridge. Idempotent and cheap
-	// (a few directory stats), so we run it unconditionally for every
-	// subcommand rather than try to detect the launchd case specifically.
-	augmentPATH()
-
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
