@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AgentKind, DeviceInfo, ServerMessage } from '../../../shared/types';
-import { CLAUDE_MODELS } from '../../../shared/types';
+import { CLAUDE_MODELS, CODEX_MODELS } from '../../../shared/types';
 import type { WSClient } from '../ws';
 import { DirectoryPicker } from './DirectoryPicker';
 
@@ -52,6 +52,7 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
     cwd: string;
     title: string;
     deviceId: string;
+    model: string;
   }>(null);
 
   // Agents available across the relevant devices. When the user picks a
@@ -71,6 +72,14 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
     if (agentsAvailable.has('claude')) setAgent('claude');
     else if (agentsAvailable.has('codex')) setAgent('codex');
   }, [devices.length, agentsAvailable, agent]);
+
+  // Reset the model selection whenever the agent changes — Claude and
+  // Codex have disjoint id namespaces, and a stale id from the other
+  // agent would just be silently dropped server-side (looking like
+  // "the default is in effect" with no UI cue).
+  useEffect(() => {
+    setModel('');
+  }, [agent]);
 
   function isDisabled(a: AgentKind) {
     return devices.length > 0 && !agentsAvailable.has(a);
@@ -120,7 +129,7 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
           replay.cwd,
           replay.title || undefined,
           replay.deviceId || undefined,
-          undefined,
+          replay.model || undefined,
         );
       }
     });
@@ -140,6 +149,7 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
         cwd: cwd.trim(),
         title: title.trim(),
         deviceId: deviceId,
+        model: model,
       });
       ws.send({
         type: 'enable_codex_on_device',
@@ -149,8 +159,11 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
       return;
     }
 
-    // Model only meaningful for Claude; Codex CLI doesn't take one yet.
-    const sendModel = agent === 'claude' && model ? model : undefined;
+    // model state is shared between agents but each agent has its own
+    // allowlist; the server drops anything outside the matching list
+    // anyway, but trim here too so we don't send a stale Claude id when
+    // the user just flipped to Codex (or vice versa) without re-picking.
+    const sendModel = model || undefined;
     onCreate(agent, cwd.trim(), title.trim() || undefined, deviceId || undefined, sendModel);
   }
 
@@ -199,6 +212,17 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
               <select value={model} onChange={(e) => setModel(e.target.value)}>
                 <option value="">Default (SDK picks — currently Opus 4.7)</option>
                 {CLAUDE_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {agent === 'codex' && (
+            <label>
+              Model
+              <select value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">Default (codex picks — currently gpt-5.5)</option>
+                {CODEX_MODELS.map((m) => (
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
               </select>

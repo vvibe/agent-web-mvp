@@ -17,6 +17,24 @@ export function isAllowedClaudeModel(m: unknown): m is ClaudeModelId {
   return typeof m === 'string' && CLAUDE_MODELS.some((cm) => cm.id === m);
 }
 
+/** Codex model dropdown options. Mirrors the Claude allowlist pattern so
+ *  daemon, server, and UI share one source of truth.
+ *
+ *  Currently only gpt-5.5 is verified to work — every other id we tried
+ *  (gpt-5, gpt-4o-mini, o3, gpt-5-codex, gpt-5.5-mini) returns 400 "not
+ *  supported when using Codex with a ChatGPT account". The dropdown still
+ *  exists so the wiring is in place for the day OpenAI enables more
+ *  models, and so the value the user picks is server-validated rather
+ *  than trusted from the browser. */
+export const CODEX_MODELS = [
+  { id: 'gpt-5.5', label: 'gpt-5.5 — codex default (currently the only model your ChatGPT auth allows)' },
+] as const;
+export type CodexModelId = (typeof CODEX_MODELS)[number]['id'];
+
+export function isAllowedCodexModel(m: unknown): m is CodexModelId {
+  return typeof m === 'string' && CODEX_MODELS.some((cm) => cm.id === m);
+}
+
 export type SessionStatus = 'idle' | 'running' | 'awaiting_permission' | 'error' | 'ended';
 
 export interface SessionMeta {

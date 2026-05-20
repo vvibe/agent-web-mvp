@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import type { ClientMessage, DaemonClientMessage, DeviceInfo, ServerMessage } from '../shared/types.ts';
 import {
   isAllowedClaudeModel,
+  isAllowedCodexModel,
   DaemonClientMessageSchema,
   DeviceHelloMessageSchema,
 } from '../shared/types.ts';
@@ -778,10 +779,15 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
         cwd: msg.cwd,
         title: msg.title,
         preferredDeviceId,
-        // Whitelisted to current Claude family — anything outside this set is
-        // dropped to undefined (= SDK default). Stops a malicious client from
-        // passing arbitrary strings into the SDK's model option.
-        model: msg.agent === 'claude' && isAllowedClaudeModel(msg.model) ? msg.model : undefined,
+        // Whitelisted per agent — anything outside the allowlist is dropped
+        // to undefined (= each agent's own default). Stops a malicious
+        // client from passing arbitrary strings into the SDK / codex CLI.
+        model:
+          msg.agent === 'claude' && isAllowedClaudeModel(msg.model)
+            ? msg.model
+            : msg.agent === 'codex' && isAllowedCodexModel(msg.model)
+              ? msg.model
+              : undefined,
       });
       send(ws, { type: 'session_created', session: metaWithDevice(s) });
       return;
