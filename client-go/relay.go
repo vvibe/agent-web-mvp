@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -393,6 +394,62 @@ func findAgentInFallbackPaths(name string) string {
 		}
 	}
 	return ""
+}
+
+// augmentPATH prepends common per-user install dirs to the daemon's own
+// PATH so that ALL subprocess spawns (node, claude, codex, npm, future
+// CLIs) can find them. On macOS the daemon runs under launchd whose
+// inherited PATH is just `/usr/bin:/bin:/usr/sbin:/sbin`, which doesn't
+// include nvm's bin, ~/.npm-global, Homebrew, or ~/.local. Without this,
+// even after we found `claude` via the fallback search, spawning `node`
+// (used by the Claude bridge) would fail with "executable file not found
+// in $PATH".
+//
+// Idempotent: dirs already present are skipped. Safe to call at startup
+// regardless of OS or how the daemon was launched (interactive shell,
+// systemd, launchd, SCM). Only adds directories that actually exist.
+func augmentPATH() {
+	home, _ := os.UserHomeDir()
+	candidates := []string{}
+	if home != "" {
+		if nvm := latestNvmNodeBin(home); nvm != "" {
+			candidates = append(candidates, nvm)
+		}
+		candidates = append(candidates,
+			home+"/.npm-global/bin",
+			home+"/.local/bin",
+		)
+	}
+	candidates = append(candidates,
+		"/opt/homebrew/bin", // Apple Silicon brew
+		"/usr/local/bin",    // Intel brew + generic Unix
+	)
+
+	sep := string(os.PathListSeparator)
+	cur := os.Getenv("PATH")
+	seen := make(map[string]bool)
+	for _, p := range strings.Split(cur, sep) {
+		seen[p] = true
+	}
+
+	var added []string
+	for _, c := range candidates {
+		if seen[c] {
+			continue
+		}
+		fi, err := os.Stat(c)
+		if err != nil || !fi.IsDir() {
+			continue
+		}
+		added = append(added, c)
+		seen[c] = true
+	}
+	if len(added) == 0 {
+		return
+	}
+	// Prepend so per-user installs win over system ones — same precedence
+	// as `export PATH="$HOME/.local/bin:$PATH"` in install.sh.
+	os.Setenv("PATH", strings.Join(added, sep)+sep+cur)
 }
 
 // latestNvmNodeBin returns ~/.nvm/versions/node/<latest>/bin, or "" if nvm
