@@ -171,8 +171,12 @@ green dot. Ctrl-C to stop.
 To make the daemon auto-start at boot, register it as an OS service:
 
 ```sh
-vvibe install                # macOS / Linux: no admin needed
-                             # Windows: needs Administrator PowerShell
+vvibe install                # no admin needed on any platform
+                             # (Windows: registers a Task Scheduler entry
+                             #  that runs as you at logon. Codex auth +
+                             #  sandbox checks rely on the OS user
+                             #  identity, which misbehaved under the old
+                             #  LocalSystem service install.)
 vvibe status                 # confirm it's running
 ```
 

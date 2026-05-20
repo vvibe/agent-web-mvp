@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -150,14 +151,27 @@ Flags:
 	fmt.Printf("\nUpdated to %s. Run `vvibe version` in a new shell to confirm.\n", release.Version())
 }
 
-// stopServiceIfRunning attempts to stop the registered OS service if it is
-// installed and currently running. Returns true if the caller should start
-// it again after the upgrade.
+// stopServiceIfRunning attempts to stop the registered OS service (or
+// Task Scheduler entry, on Windows) if it is installed and currently
+// running. Returns true if the caller should start it again after the
+// upgrade.
 //
-// Errors are intentionally swallowed: the most common case is "service not
-// installed" (foreground / dev usage), and there is nothing useful we can do
-// about a transient SCM error here beyond noting it.
+// Errors are intentionally swallowed: the most common case is "service /
+// task not installed" (foreground / dev usage), and there is nothing
+// useful we can do about a transient SCM error here beyond noting it.
 func stopServiceIfRunning() bool {
+	if runtime.GOOS == "windows" {
+		// Task Scheduler path: ask the helper whether the daemon is up;
+		// if it is, end the task instance + kill any stray daemon child.
+		// Mirrors what `vvibe stop` does, minus the "stop ok" stdout.
+		if !taskInstalled() || !vvibeProcessRunning() {
+			return false
+		}
+		fmt.Println("Stopping daemon…")
+		_, _ = runSchtasks("/End", "/TN", taskName)
+		_ = killUserVvibeProcesses()
+		return true
+	}
 	svc, err := newService()
 	if err != nil {
 		return false
@@ -179,6 +193,16 @@ func stopServiceIfRunning() bool {
 }
 
 func tryStartService() {
+	if runtime.GOOS == "windows" {
+		// `schtasks /Run` is fire-and-forget; failure here usually means
+		// the task was deleted between stop and start. Surface the warning
+		// the same way the non-Windows path does.
+		fmt.Println("Starting daemon…")
+		if out, err := runSchtasks("/Run", "/TN", taskName); err != nil {
+			fmt.Printf("warning: failed to start (%v): %s\nRun `vvibe start` manually.\n", err, strings.TrimSpace(out))
+		}
+		return
+	}
 	svc, err := newService()
 	if err != nil {
 		return

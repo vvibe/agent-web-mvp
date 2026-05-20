@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/kardianos/service"
@@ -80,6 +81,16 @@ func newService() (service.Service, error) {
 }
 
 func runInstall(args []string) {
+	// Windows: register a Task Scheduler entry that runs as the
+	// interactive user, NOT an SCM service running as LocalSystem.
+	// Several codex paths (auth, project trust) check the OS user
+	// identity directly and misbehave under LocalSystem regardless of
+	// USERPROFILE override. See service_task_windows.go for the why.
+	if runtime.GOOS == "windows" {
+		runWindowsTaskInstall(args)
+		return
+	}
+
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
 	force := fs.Bool("force", false, "register the service even if no token is configured (login later)")
 	_ = fs.Parse(args)
@@ -137,6 +148,10 @@ func runInstall(args []string) {
 }
 
 func runUninstall() {
+	if runtime.GOOS == "windows" {
+		runWindowsTaskUninstall()
+		return
+	}
 	svc, err := newService()
 	if err != nil {
 		die("create service: %v", err)
@@ -151,6 +166,10 @@ func runUninstall() {
 }
 
 func runSvcAction(action string) {
+	if runtime.GOOS == "windows" {
+		runWindowsTaskAction(action)
+		return
+	}
 	svc, err := newService()
 	if err != nil {
 		die("create service: %v", err)
@@ -174,6 +193,10 @@ func runSvcAction(action string) {
 // always a missing token or wrong server URL. Showing both inline saves a
 // second `vvibe show-config` round-trip.
 func runStatus() {
+	if runtime.GOOS == "windows" {
+		runWindowsTaskStatus()
+		return
+	}
 	svc, err := newService()
 	if err != nil {
 		die("create service: %v", err)

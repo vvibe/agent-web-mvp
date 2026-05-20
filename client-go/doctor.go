@@ -119,30 +119,27 @@ func sectionConfig(out io.Writer) int {
 
 func sectionService(out io.Writer) int {
 	fmt.Fprintln(out, "\n--- Service ---------------------------------------------------------")
-	svc, err := newService()
-	if err != nil {
-		fmt.Fprintf(out, "cannot construct service handle: %v\n", err)
-		return 0
-	}
-	st, err := svc.Status()
-	switch {
-	case err != nil && isAccessDenied(err):
-		// Windows: SCM Query rights require elevation. On non-admin shells
-		// kardianos surfaces "Access is denied." Reporting that as "not
-		// installed" is misleading — the service may well be running fine
-		// and the user just lacks permission to read its state.
-		fmt.Fprintf(out, "State:    unknown (could not query SCM — re-run from an Administrator shell)\n")
-	case err != nil:
-		fmt.Fprintf(out, "State:    not installed (%v)\n", err)
-	case st == service.StatusRunning:
-		fmt.Fprintln(out, "State:    Running")
-	case st == service.StatusStopped:
-		fmt.Fprintln(out, "State:    Stopped")
-	default:
-		fmt.Fprintf(out, "State:    %v\n", st)
-	}
 	if runtime.GOOS == "windows" {
-		fmt.Fprintln(out, "RunAs:    LocalSystem (Windows service default)")
+		sectionWindowsTask(out)
+	} else {
+		svc, err := newService()
+		if err != nil {
+			fmt.Fprintf(out, "cannot construct service handle: %v\n", err)
+			return 0
+		}
+		st, err := svc.Status()
+		switch {
+		case err != nil && isAccessDenied(err):
+			fmt.Fprintf(out, "State:    unknown (could not query — re-run from an Administrator shell)\n")
+		case err != nil:
+			fmt.Fprintf(out, "State:    not installed (%v)\n", err)
+		case st == service.StatusRunning:
+			fmt.Fprintln(out, "State:    Running")
+		case st == service.StatusStopped:
+			fmt.Fprintln(out, "State:    Stopped")
+		default:
+			fmt.Fprintf(out, "State:    %v\n", st)
+		}
 	}
 	exe, _ := os.Executable()
 	fmt.Fprintf(out, "Binary:   %s\n", exe)
