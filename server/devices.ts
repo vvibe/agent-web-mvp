@@ -9,6 +9,10 @@ export interface DeviceHello {
   version: string;
   agents: Array<{ name: string; path: string }>;
   pid: number;
+  /** Daemon-reported codex opt-in state. Optional so older daemon binaries
+   *  (pre-v0.1.18) that don't send it validate cleanly — server treats
+   *  `undefined` as `false` when projecting into DeviceInfo. */
+  codexEnabled?: boolean;
 }
 
 export interface Device extends DeviceHello {
@@ -150,6 +154,22 @@ export class DeviceRegistry {
     const d = this.devices.get(id);
     if (!d || d.ws.readyState !== d.ws.OPEN) return false;
     d.ws.send(JSON.stringify(msg));
+    return true;
+  }
+
+  /**
+   * Mutate the codex-enabled flag for a connected device and re-broadcast
+   * to every browser tab the user has open. Called from the
+   * daemon_codex_enable_ack handler so the NewSessionDialog flips from
+   * the "Enable codex" panel to the normal Create button without the
+   * browser having to re-request the device list.
+   */
+  setCodexEnabled(id: string, enabled: boolean): boolean {
+    const d = this.devices.get(id);
+    if (!d) return false;
+    if (d.codexEnabled === enabled) return true;
+    d.codexEnabled = enabled;
+    this.notify();
     return true;
   }
 

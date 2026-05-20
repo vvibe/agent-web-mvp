@@ -11,11 +11,16 @@ import (
 	"github.com/kardianos/service"
 )
 
-// codexDefaultArgs is the conservative baseline we write when the user
-// runs `vvibe codex enable` without supplying their own --args. Read-only
-// sandbox + per-tool approval is the closest analogue to what Claude
-// gives the user out of the box (interactive permission per tool).
-const codexDefaultArgs = "--sandbox read-only --ask-for-approval on-request"
+// codexDefaultArgs is the baseline we write when the user runs `vvibe
+// codex enable` without supplying their own --args.
+//
+// `--sandbox workspace-write` constrains codex to read/write within the
+// session's cwd (which the daemon's allowlist already gated separately) —
+// codex *exec* mode has no per-tool approval flag, so the sandbox IS the
+// entire safety story. Read-only is too restrictive for the common
+// "make a code change" workflow; danger-full-access defeats the purpose
+// of the gate. workspace-write is the smallest useful default.
+const codexDefaultArgs = "--sandbox workspace-write"
 
 // runCodex dispatches the `vvibe codex …` subcommand. We use a sub-verb
 // (enable / disable / status) rather than flags on the bare command so
@@ -172,14 +177,18 @@ func runCodexDisable() {
 // args. The existing config value (if any) wins over the hard-coded
 // baseline as the suggested default — re-running `vvibe codex enable`
 // after tweaks shouldn't silently revert previous customisation.
+//
+// The wording is deliberately blunt and action-first: most users hit
+// Enter and move on. Only people who actually know what `--sandbox`
+// means will type something custom, and they don't need the explanation.
 func promptForCodexArgs(existing string) string {
 	suggested := existing
 	if suggested == "" {
 		suggested = codexDefaultArgs
 	}
-	fmt.Println("Codex has no per-tool permission UI; the args below ARE the entire")
-	fmt.Println("safety model for sessions run via this daemon. The default mirrors")
-	fmt.Println("Claude's interactive-per-tool behaviour.")
+	fmt.Println("Press Enter to use the recommended default below, or type your own")
+	fmt.Println("codex CLI flags. The default lets codex read+write inside the session's")
+	fmt.Println("working directory only.")
 	fmt.Println()
 	fmt.Printf("  args [%s]: ", suggested)
 	reader := bufio.NewReader(os.Stdin)

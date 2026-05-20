@@ -116,14 +116,15 @@ func connectOnce(ctx context.Context, cfg *Config) error {
 		displayName = hostname
 	}
 	hello := map[string]any{
-		"type":        "hello",
-		"hostname":    hostname,
-		"displayName": displayName,
-		"os":          runtime.GOOS,
-		"arch":        runtime.GOARCH,
-		"version":     "0.1.0",
-		"agents":      detectAgents(),
-		"pid":         os.Getpid(),
+		"type":          "hello",
+		"hostname":      hostname,
+		"displayName":   displayName,
+		"os":            runtime.GOOS,
+		"arch":          runtime.GOARCH,
+		"version":       "0.1.0",
+		"agents":        detectAgents(),
+		"pid":           os.Getpid(),
+		"codexEnabled":  codexEnabled(cfg),
 	}
 	if err := writeJSON(conn, hello); err != nil {
 		return err
@@ -228,6 +229,11 @@ func handleServerMessage(s *wsSender, msg map[string]any) {
 		// goroutines on a malformed/spammy server. If this ever blocks the
 		// reader loop, move to a worker pool.
 		handleListDir(s, msg)
+	case "daemon_enable_codex":
+		// In-UI codex enablement. Server has already validated sandboxArgs
+		// against its allowlist before forwarding; daemon trusts the shape
+		// but only writes a known-good sandbox flag. See handleEnableCodex.
+		handleEnableCodex(s, msg)
 	default:
 		log.Printf("ignoring message type %q", t)
 	}
@@ -405,4 +411,87 @@ func latestNvmNodeBin(home string) string {
 		return ""
 	}
 	return d + "/bin"
+}
+
+// codexEnabled returns the daemon-side opt-in state we report in the
+// hello message. Mirrors runner_codex.go's gate logic so the UI never
+// shows "enabled" for a config the runner would refuse to honour:
+//   - codex must be discoverable on PATH (or fallback paths),
+//   - AND either the config flag OR the legacy env var must be set.
+//
+// Defensive nil-check on cfg because hello fires from a path that already
+// tolerates loadConfig errors elsewhere.
+func codexEnabled(cfg *Config) bool {
+	if cfg == nil {
+		// Env-var-only path: still works if the operator set the legacy
+		// variable but lost the config file. The runner gate accepts this,
+		// so the UI should too.
+		return hasCodex() && os.Getenv("CODEX_TRUST_DEFAULTS") == "1"
+	}
+	if !hasCodex() {
+		return false
+	}
+	return cfg.CodexTrustDefaults || os.Getenv("CODEX_TRUST_DEFAULTS") == "1"
+}
+
+// hasCodex returns whether codex is reachable from this daemon, taking
+// the same fallback-path logic detectAgents uses. Pulled out so codexEnabled
+// can ask "is codex even an option here?" without rebuilding detectAgents'
+// full slice.
+func hasCodex() bool {
+	if _, err := exec.LookPath("codex"); err == nil {
+		return true
+	}
+	return findAgentInFallbackPaths("codex") != ""
+}
+
+// handleEnableCodex is the daemon side of the in-UI "Enable codex on this
+// device" flow. The server has already authenticated the request and
+// validated the sandbox flag against an allowlist; we trust the args
+// string verbatim and write it to client.json. The runner reads config
+// per-turn (see runner_codex.go), so no restart is needed.
+//
+// Always acks — success or failure — so the browser can pivot from
+// "enabling…" spinner to either "enabled, creating session" or an
+// explanatory error toast.
+func handleEnableCodex(s *wsSender, msg map[string]any) {
+	requestId, _ := msg["requestId"].(string)
+	args, _ := msg["sandboxArgs"].(string)
+	if requestId == "" {
+		log.Printf("daemon_enable_codex: missing requestId, ignoring")
+		return
+	}
+
+	ack := func(success bool, errMsg string) {
+		payload := map[string]any{
+			"type":      "daemon_codex_enable_ack",
+			"requestId": requestId,
+			"success":   success,
+		}
+		if errMsg != "" {
+			payload["error"] = errMsg
+		}
+		_ = s.send(payload)
+	}
+
+	if !hasCodex() {
+		ack(false, "codex CLI is not installed on this machine — install codex first, then retry.")
+		return
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		ack(false, "daemon couldn't read its config file: "+err.Error())
+		return
+	}
+	cfg.CodexTrustDefaults = true
+	if args != "" {
+		cfg.CodexArgs = args
+	}
+	if err := saveConfig(cfg); err != nil {
+		ack(false, "daemon couldn't write its config file: "+err.Error())
+		return
+	}
+	log.Printf("codex enabled via UI: args=%q", cfg.CodexArgs)
+	ack(true, "")
 }

@@ -38,6 +38,19 @@ func (r *codexRunner) Run(
 	//   2. Legacy env var CODEX_TRUST_DEFAULTS=1 — kept for back-compat with
 	//      users who already wired this into their service/shell env.
 	cfg, _ := loadConfig()
+	// Self-heal config written by v0.1.17 (which baked in a non-existent
+	// `--ask-for-approval` flag against `codex exec`). One-shot rewrite to
+	// a working baseline so existing users don't have to do the
+	// disable→enable shuffle after `vvibe upgrade`.
+	if cfg != nil && strings.Contains(cfg.CodexArgs, "--ask-for-approval") {
+		broken := cfg.CodexArgs
+		cfg.CodexArgs = "--sandbox workspace-write"
+		if err := saveConfig(cfg); err == nil {
+			emit("system", fmt.Sprintf(
+				"note: rewrote codex args from %q to %q (the previous default included a flag that codex exec doesn't accept).",
+				broken, cfg.CodexArgs), nil)
+		}
+	}
 	trustedByConfig := cfg != nil && cfg.CodexTrustDefaults
 	trustedByEnv := os.Getenv("CODEX_TRUST_DEFAULTS") == "1"
 	if !trustedByConfig && !trustedByEnv {

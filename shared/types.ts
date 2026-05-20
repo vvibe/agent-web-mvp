@@ -124,6 +124,12 @@ export interface DeviceInfo {
   version: string;
   agents: Array<{ name: string; path: string }>;
   connectedAt: number;
+  /** True when this daemon has codex on PATH AND the operator has opted in
+   *  (config file or legacy CODEX_TRUST_DEFAULTS=1 env var). False means
+   *  the daemon either lacks codex or hasn't been enabled — the web UI
+   *  surfaces an inline "Enable codex on this device" flow in that case
+   *  instead of letting `create_session` fail silently. */
+  codexEnabled?: boolean;
 }
 
 /** Directory entry returned by `list_dir`. Files are filtered server-side
@@ -168,6 +174,16 @@ export type ClientMessage =
       deviceId?: string;
       /** Empty string = ask the daemon for its home dir. */
       path: string;
+    }
+  /** Turn on codex on a specific daemon, in-UI. Replaces the old "ssh to
+   *  the machine and run `vvibe codex enable`" path: server forwards to
+   *  the daemon which writes the same client.json field. Server validates
+   *  the chosen sandbox arg against an allowlist before forwarding. */
+  | {
+      type: 'enable_codex_on_device';
+      deviceId: string;
+      /** One of 'read-only', 'workspace-write', 'danger-full-access'. */
+      sandboxMode: 'read-only' | 'workspace-write' | 'danger-full-access';
     };
 
 // ─── Server → Client ─────────────────────────────────────────────────────────
@@ -193,6 +209,17 @@ export type ServerMessage =
        *  (filesystem root on POSIX, drive letter on Windows). */
       parent?: string;
       entries: DirEntry[];
+      error?: string;
+    }
+  /** Result of an `enable_codex_on_device` request. On success the
+   *  matching `devices` broadcast will also fire (with codexEnabled=true);
+   *  this message exists so the UI can react synchronously to the click
+   *  rather than having to diff before/after device snapshots. */
+  | {
+      type: 'codex_enable_result';
+      deviceId: string;
+      success: boolean;
+      /** Present iff success=false. */
       error?: string;
     }
   | { type: 'error'; sessionId?: string; error: string };
@@ -228,6 +255,18 @@ export type DaemonServerMessage =
       requestId: string;
       /** Empty string = daemon picks its home dir. */
       path: string;
+    }
+  /** Server-initiated request to enable codex on this daemon. The daemon
+   *  writes the new state to client.json and acks via
+   *  `daemon_codex_enable_ack`. The runner reads config per-turn, so no
+   *  restart is needed for the change to take effect. */
+  | {
+      type: 'daemon_enable_codex';
+      /** Correlates with the ack so the server can route the result back
+       *  to the right browser tab. */
+      requestId: string;
+      /** Validated server-side before forwarding. */
+      sandboxArgs: string;
     };
 
 export type DaemonClientMessage =
@@ -257,6 +296,13 @@ export type DaemonClientMessage =
       path: string;
       parent?: string;
       entries: DirEntry[];
+      error?: string;
+    }
+  | {
+      type: 'daemon_codex_enable_ack';
+      requestId: string;
+      success: boolean;
+      /** Present iff success=false. */
       error?: string;
     };
 
@@ -327,6 +373,12 @@ export const DaemonClientMessageSchema = z.discriminatedUnion('type', [
     entries: z.array(DirEntrySchema).max(ENTRIES_MAX),
     error: z.string().max(ERROR_MAX).optional(),
   }),
+  z.object({
+    type: z.literal('daemon_codex_enable_ack'),
+    requestId: z.string().min(1).max(REQUEST_ID_MAX),
+    success: z.boolean(),
+    error: z.string().max(ERROR_MAX).optional(),
+  }),
 ]);
 
 /** The daemon's first message on the /client WS. Not part of
@@ -349,4 +401,7 @@ export const DeviceHelloMessageSchema = z.object({
     )
     .max(50),
   pid: z.number().int().min(0),
+  /** Daemon-reported codex opt-in state. Optional so an older daemon
+   *  binary still validates — server treats `undefined` as `false`. */
+  codexEnabled: z.boolean().optional(),
 });

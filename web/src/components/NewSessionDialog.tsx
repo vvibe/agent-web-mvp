@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { AgentKind, DeviceInfo } from '../../../shared/types';
+import type { AgentKind, DeviceInfo, ServerMessage } from '../../../shared/types';
 import { CLAUDE_MODELS } from '../../../shared/types';
 import type { WSClient } from '../ws';
 import { DirectoryPicker } from './DirectoryPicker';
+
+type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
 
 interface Props {
   defaultCwd: string;
@@ -34,6 +36,24 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
   const [deviceId, setDeviceId] = useState<string>('');
   const [showBrowser, setShowBrowser] = useState(false);
 
+  // Codex enablement state — only relevant when agent === 'codex' and the
+  // chosen device hasn't opted in yet. The dialog flips into a "first-time
+  // setup" mode that combines enable + create into a single button.
+  const [sandboxMode, setSandboxMode] = useState<SandboxMode>('workspace-write');
+  const [enabling, setEnabling] = useState(false);
+  const [enableError, setEnableError] = useState<string | null>(null);
+  // The deviceId we just sent an enable request for — so we can ignore
+  // stale acks if the user switches device between click and response.
+  const [pendingEnableDeviceId, setPendingEnableDeviceId] = useState<string | null>(null);
+  // Form values captured at the moment of "Enable & Create" click. We
+  // replay them onCreate after the daemon acks success, so editing fields
+  // mid-enable doesn't surprise the user with last-second values.
+  const [enableThenCreate, setEnableThenCreate] = useState<null | {
+    cwd: string;
+    title: string;
+    deviceId: string;
+  }>(null);
+
   // Agents available across the relevant devices. When the user picks a
   // specific device, only that one counts; with "Any" we union across all
   // connected daemons since RemoteRunner is free to pick at send() time.
@@ -56,9 +76,79 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
     return devices.length > 0 && !agentsAvailable.has(a);
   }
 
+  // Which concrete device would the codex enable request target? With a
+  // pinned device, that's the answer. With "Any", pick the first
+  // codex-capable device — predictable and avoids server having to guess.
+  const codexCandidateDevice = useMemo(() => {
+    if (deviceId) return devices.find((d) => d.id === deviceId);
+    return devices.find((d) => (d.agents ?? []).some((a) => a.name === 'codex'));
+  }, [deviceId, devices]);
+
+  // Whether the chosen agent needs the inline enablement panel right now.
+  // Only kicks in for codex, only when the candidate device exists and
+  // hasn't opted in yet. (When devices.length === 0 we're in anon/local
+  // mode and there's no codex policy to flip — the server's own gate
+  // handles that case separately.)
+  const codexNeedsEnable =
+    agent === 'codex' &&
+    devices.length > 0 &&
+    !!codexCandidateDevice &&
+    codexCandidateDevice.codexEnabled === false;
+
+  // Subscribe to codex_enable_result so we can flip the spinner off and
+  // proceed with create on success. Tied to the dialog's lifetime — once
+  // closed, no stray acks can touch state.
+  useEffect(() => {
+    const off = ws.on((msg: ServerMessage) => {
+      if (msg.type !== 'codex_enable_result') return;
+      if (msg.deviceId !== pendingEnableDeviceId) return;
+      setEnabling(false);
+      setPendingEnableDeviceId(null);
+      if (!msg.success) {
+        setEnableError(msg.error ?? 'Daemon refused to enable codex.');
+        setEnableThenCreate(null);
+        return;
+      }
+      // Daemon flipped its flag and server has broadcast the updated
+      // devices list; replay the captured form values to fire the
+      // create_session that the user originally clicked for.
+      const replay = enableThenCreate;
+      setEnableThenCreate(null);
+      if (replay) {
+        onCreate(
+          'codex',
+          replay.cwd,
+          replay.title || undefined,
+          replay.deviceId || undefined,
+          undefined,
+        );
+      }
+    });
+    return off;
+  }, [ws, pendingEnableDeviceId, enableThenCreate, onCreate]);
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!cwd.trim()) return;
+
+    if (codexNeedsEnable) {
+      if (!codexCandidateDevice) return;
+      setEnableError(null);
+      setEnabling(true);
+      setPendingEnableDeviceId(codexCandidateDevice.id);
+      setEnableThenCreate({
+        cwd: cwd.trim(),
+        title: title.trim(),
+        deviceId: deviceId,
+      });
+      ws.send({
+        type: 'enable_codex_on_device',
+        deviceId: codexCandidateDevice.id,
+        sandboxMode,
+      });
+      return;
+    }
+
     // Model only meaningful for Claude; Codex CLI doesn't take one yet.
     const sendModel = agent === 'claude' && model ? model : undefined;
     onCreate(agent, cwd.trim(), title.trim() || undefined, deviceId || undefined, sendModel);
@@ -69,6 +159,9 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
   const scopeLabel = selectedDevice
     ? (selectedDevice.displayName ?? selectedDevice.hostname)
     : 'any connected device';
+  const targetDeviceLabel = codexCandidateDevice
+    ? (codexCandidateDevice.displayName ?? codexCandidateDevice.hostname)
+    : '';
 
   return (
     <div className="modal-backdrop" onClick={onCancel}>
@@ -154,12 +247,84 @@ export function NewSessionDialog({ defaultCwd, devices, ws, onCancel, onCreate }
               placeholder="auto-generated if blank"
             />
           </label>
+
+          {codexNeedsEnable && (
+            <div className="codex-enable-panel">
+              <h4>First-time setup for Codex</h4>
+              <p className="codex-enable-blurb">
+                Codex doesn't have a per-tool permission popup like Claude does.
+                Pick what it's allowed to do on{' '}
+                <strong>{targetDeviceLabel || 'this device'}</strong>:
+              </p>
+              <fieldset className="sandbox-choice" disabled={enabling}>
+                <label className="sandbox-option">
+                  <input
+                    type="radio"
+                    name="sandbox-mode"
+                    value="workspace-write"
+                    checked={sandboxMode === 'workspace-write'}
+                    onChange={() => setSandboxMode('workspace-write')}
+                  />
+                  <span>
+                    <strong>Workspace write</strong>{' '}
+                    <span className="sandbox-recommended">(recommended)</span>
+                    <span className="sandbox-detail">
+                      Read &amp; write inside the session's working directory only.
+                    </span>
+                  </span>
+                </label>
+                <label className="sandbox-option">
+                  <input
+                    type="radio"
+                    name="sandbox-mode"
+                    value="read-only"
+                    checked={sandboxMode === 'read-only'}
+                    onChange={() => setSandboxMode('read-only')}
+                  />
+                  <span>
+                    <strong>Read-only</strong>
+                    <span className="sandbox-detail">
+                      Can read files but can't modify anything.
+                    </span>
+                  </span>
+                </label>
+                <label className="sandbox-option">
+                  <input
+                    type="radio"
+                    name="sandbox-mode"
+                    value="danger-full-access"
+                    checked={sandboxMode === 'danger-full-access'}
+                    onChange={() => setSandboxMode('danger-full-access')}
+                  />
+                  <span>
+                    <strong>Full access</strong>{' '}
+                    <span className="sandbox-danger">(dangerous)</span>
+                    <span className="sandbox-detail">
+                      Can read &amp; write anywhere on the device. No sandbox.
+                    </span>
+                  </span>
+                </label>
+              </fieldset>
+              {enableError && (
+                <p className="codex-enable-error">{enableError}</p>
+              )}
+            </div>
+          )}
+
           <div className="modal-actions">
-            <button type="button" onClick={onCancel}>
+            <button type="button" onClick={onCancel} disabled={enabling}>
               Cancel
             </button>
-            <button type="submit" className="allow" disabled={isDisabled(agent)}>
-              Create
+            <button
+              type="submit"
+              className="allow"
+              disabled={isDisabled(agent) || enabling}
+            >
+              {enabling
+                ? 'Enabling Codex…'
+                : codexNeedsEnable
+                  ? 'Enable Codex & Create'
+                  : 'Create'}
             </button>
           </div>
         </form>

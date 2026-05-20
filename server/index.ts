@@ -3,6 +3,7 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { existsSync, statSync, readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
@@ -465,6 +466,29 @@ clientWss.on('connection', (ws, req) => {
         error: msg.error,
       });
     }
+
+    // Codex enable ack: flip the registry state, broadcast updated
+    // devices to every browser tab (so other tabs see the change too),
+    // and tell the originating tab synchronously so it can advance from
+    // the "Enabling…" spinner to creating the session.
+    if (msg.type === 'daemon_codex_enable_ack') {
+      const pending = pendingCodexEnables.get(msg.requestId);
+      if (!pending) return;
+      // Same cross-tenant guard as dir listings: the daemon ack must be
+      // for a request initiated by a browser owned by the same user.
+      if (pending.userId !== userId) return;
+      pendingCodexEnables.delete(msg.requestId);
+      if (msg.success) {
+        devices.setCodexEnabled(pending.deviceId, true);
+        broadcastDevices(userId);
+      }
+      send(pending.ws, {
+        type: 'codex_enable_result',
+        deviceId: pending.deviceId,
+        success: msg.success,
+        error: msg.error,
+      });
+    }
   });
 
   ws.on('close', () => {
@@ -543,6 +567,35 @@ setInterval(() => {
   }
 }, 1_000).unref();
 
+// Parallel structure for codex enablement requests. Same shape, same
+// reason: the daemon might be running a pre-v0.1.18 binary that doesn't
+// know how to handle daemon_enable_codex, in which case the browser would
+// be stuck on "Enabling…" forever. TTL sweep emits a clear "upgrade
+// vvibe" error so the user has somewhere to go next.
+const CODEX_ENABLE_TTL_MS = 5_000;
+interface PendingCodexEnable {
+  ws: WebSocket;
+  userId: string;
+  deviceId: string;
+  expiresAt: number;
+}
+const pendingCodexEnables = new Map<string, PendingCodexEnable>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, p] of pendingCodexEnables) {
+    if (p.expiresAt >= now) continue;
+    pendingCodexEnables.delete(id);
+    send(p.ws, {
+      type: 'codex_enable_result',
+      deviceId: p.deviceId,
+      success: false,
+      error:
+        'Daemon did not respond. The device may be running an older vvibe — ' +
+        'run `vvibe upgrade` on it (or use `vvibe codex enable` directly) and retry.',
+    });
+  }
+}, 1_000).unref();
+
 async function listLocalDir(rawPath: string): Promise<{
   path: string;
   parent?: string;
@@ -596,6 +649,11 @@ function deviceInfo(userId: string): DeviceInfo[] {
     version: d.version,
     agents: d.agents,
     connectedAt: d.connectedAt,
+    // Daemons running older builds don't send codexEnabled at all — coerce
+    // to false so the UI uniformly shows "needs enabling" rather than
+    // greying out the dropdown silently. Once the user upgrades the
+    // daemon, the broadcast on next hello flips this to its real value.
+    codexEnabled: d.codexEnabled ?? false,
   }));
 }
 
@@ -857,6 +915,63 @@ async function handleClientMessage(ws: WebSocket, userId: string, msg: ClientMes
       }
       const local = await listLocalDir(msg.path);
       send(ws, { type: 'dir_listing', requestId: msg.requestId, ...local });
+      return;
+    }
+    case 'enable_codex_on_device': {
+      // Validate device ownership before doing anything else — without this,
+      // any browser could flip arbitrary daemons' policy state by guessing
+      // device IDs. Same shape as the deviceId check in create_session.
+      const target = devices.get(msg.deviceId);
+      if (!target || target.userId !== userId) {
+        send(ws, {
+          type: 'codex_enable_result',
+          deviceId: msg.deviceId,
+          success: false,
+          error: 'Unknown device.',
+        });
+        return;
+      }
+      // Translate the typed sandboxMode into actual codex CLI flags here
+      // (rather than letting the browser send raw args). Two reasons: it
+      // keeps the wire surface narrow (no risk of a buggy browser sending
+      // `--dangerously-bypass-approvals-and-sandbox`), and lets us evolve
+      // the flag wording independently of the UI labels.
+      const sandboxArgsByMode: Record<typeof msg.sandboxMode, string> = {
+        'read-only': '--sandbox read-only',
+        'workspace-write': '--sandbox workspace-write',
+        'danger-full-access': '--sandbox danger-full-access',
+      };
+      const sandboxArgs = sandboxArgsByMode[msg.sandboxMode];
+      if (!sandboxArgs) {
+        send(ws, {
+          type: 'codex_enable_result',
+          deviceId: msg.deviceId,
+          success: false,
+          error: `Invalid sandbox mode: ${String(msg.sandboxMode)}`,
+        });
+        return;
+      }
+      const requestId = randomUUID();
+      pendingCodexEnables.set(requestId, {
+        ws,
+        userId,
+        deviceId: msg.deviceId,
+        expiresAt: Date.now() + CODEX_ENABLE_TTL_MS,
+      });
+      const ok = devices.sendToDevice(target.id, {
+        type: 'daemon_enable_codex',
+        requestId,
+        sandboxArgs,
+      });
+      if (!ok) {
+        pendingCodexEnables.delete(requestId);
+        send(ws, {
+          type: 'codex_enable_result',
+          deviceId: msg.deviceId,
+          success: false,
+          error: 'Daemon disconnected. Reconnect the device and retry.',
+        });
+      }
       return;
     }
   }
