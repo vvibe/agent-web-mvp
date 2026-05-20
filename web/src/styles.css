@@ -767,6 +767,25 @@ code {
   font-size: 12px;
   white-space: nowrap;
 }
+.dir-picker-query {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 0 0 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--text);
+}
+.dir-picker-query::placeholder {
+  color: var(--text-dim);
+  font-family: inherit;
+}
+.dir-picker-query:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .dir-list {
   list-style: none;
   margin: 0 0 12px;
