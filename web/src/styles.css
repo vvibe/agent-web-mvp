@@ -570,6 +570,51 @@ code {
   margin: 0 0 12px;
 }
 
+/* ─── Server-error toast stack ─────────────────────────────────────── */
+.toast-stack {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(520px, calc(100vw - 24px));
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.toast-error {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  color: var(--red);
+}
+.toast-text {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.toast-dismiss {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  opacity: 0.7;
+}
+.toast-dismiss:hover { opacity: 1; }
+
 /* ─── Auth-required modal ──────────────────────────────────────────── */
 .auth-cmd-row {
   display: flex;

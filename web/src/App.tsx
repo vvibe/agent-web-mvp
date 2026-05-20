@@ -75,6 +75,12 @@ function MainApp({ me }: { me: Me }) {
   const [authRequired, setAuthRequired] = useState<Record<string, AuthRequiredInfo>>({});
   const [showNew, setShowNew] = useState(false);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
+  // Server-side rejections (e.g. codex gated behind CODEX_TRUST_DEFAULTS,
+  // unknown device, cwd doesn't exist) used to go to console-only and the
+  // user just saw "nothing happened". Stack them as dismissible toasts so
+  // every server `{type:'error'}` becomes visible.
+  const [serverErrors, setServerErrors] = useState<{ id: number; text: string }[]>([]);
+  const errorIdRef = useRef(0);
 
   useEffect(() => {
     const ws = new WSClient(makeWsUrl());
@@ -135,9 +141,12 @@ function MainApp({ me }: { me: Me }) {
       case 'devices':
         setDevices(msg.devices);
         break;
-      case 'error':
+      case 'error': {
         console.error('[server error]', msg.error);
+        const id = ++errorIdRef.current;
+        setServerErrors((prev) => [...prev, { id, text: msg.error }]);
         break;
+      }
     }
   }
 
@@ -164,6 +173,25 @@ function MainApp({ me }: { me: Me }) {
 
   return (
     <div className="app">
+      {serverErrors.length > 0 && (
+        <div className="toast-stack" role="alert" aria-live="polite">
+          {serverErrors.map((e) => (
+            <div key={e.id} className="toast toast-error">
+              <span className="toast-text">{e.text}</span>
+              <button
+                type="button"
+                className="toast-dismiss"
+                aria-label="Dismiss"
+                onClick={() =>
+                  setServerErrors((prev) => prev.filter((p) => p.id !== e.id))
+                }
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1>Agent Web</h1>
